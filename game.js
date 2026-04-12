@@ -29,7 +29,6 @@ const resetMatchBtn = document.getElementById('resetMatchBtn');
 const turnText = document.getElementById('turnText');
 const phaseText = document.getElementById('phaseText');
 const diceText = document.getElementById('diceText');
-const dicePopBubble = document.getElementById('dicePopBubble');
 const roundText = document.getElementById('roundText');
 const p1Score = document.getElementById('p1Score');
 const p2Score = document.getElementById('p2Score');
@@ -67,7 +66,9 @@ function getOpponent(player) {
 }
 
 function isBotTurn() {
-  return state.currentPlayer === BOT_PLAYER && state.phase !== 'roundOver' && state.phase !== 'matchOver';
+  return state.currentPlayer === BOT_PLAYER &&
+    state.phase !== 'roundOver' &&
+    state.phase !== 'matchOver';
 }
 
 function getPlayerLabel(player) {
@@ -86,7 +87,11 @@ function manhattan(a, b) {
   return Math.abs(a.row - b.row) + Math.abs(a.col - b.col);
 }
 
-function getReachableTiles(player, maxSteps = 1) {
+function isWallTile(row, col) {
+  return blockedTiles.some(b => b.row === row && b.col === col);
+}
+
+function getReachableTiles(player) {
   const start = state.players[player];
   const opponent = state.players[getOpponent(player)];
   const dirs = [
@@ -101,9 +106,11 @@ function getReachableTiles(player, maxSteps = 1) {
   for (const dir of dirs) {
     const nr = start.row + dir.dr;
     const nc = start.col + dir.dc;
+
     if (!inBounds(nr, nc)) continue;
     if (nr === opponent.row && nc === opponent.col) continue;
-    if (blockedTiles.some(b => b.row === nr && b.col === nc)) continue;
+    if (isWallTile(nr, nc)) continue;
+
     reachable.push({ row: nr, col: nc });
   }
 
@@ -123,9 +130,11 @@ function hasAdjacentEscape(player) {
   for (const dir of dirs) {
     const nr = me.row + dir.dr;
     const nc = me.col + dir.dc;
+
     if (!inBounds(nr, nc)) continue;
     if (nr === opponent.row && nc === opponent.col) continue;
-    if (blockedTiles.some(b => b.row === nr && b.col === nc)) continue;
+    if (isWallTile(nr, nc)) continue;
+
     return true;
   }
 
@@ -158,9 +167,11 @@ function hasPathBetween(start, target) {
       const nr = current.row + dir.dr;
       const nc = current.col + dir.dc;
       const key = `${nr},${nc}`;
+
       if (!inBounds(nr, nc)) continue;
       if (visited.has(key)) continue;
-      if (blockedTiles.some(tile => tile.row === nr && tile.col === nc)) continue;
+      if (isWallTile(nr, nc)) continue;
+
       visited.add(key);
       queue.push({ row: nr, col: nc });
     }
@@ -169,7 +180,7 @@ function hasPathBetween(start, target) {
   return false;
 }
 
-function generateRandomBlockedTiles(count = 4) {
+function generateRandomBlockedTiles(count = 12) {
   const start1 = { row: 0, col: 0 };
   const start2 = { row: SIZE - 1, col: SIZE - 1 };
   const forbidden = new Set([
@@ -178,6 +189,7 @@ function generateRandomBlockedTiles(count = 4) {
   ]);
 
   let attempts = 0;
+
   do {
     attempts += 1;
     blockedTiles.length = 0;
@@ -186,8 +198,10 @@ function generateRandomBlockedTiles(count = 4) {
       const row = Math.floor(Math.random() * SIZE);
       const col = Math.floor(Math.random() * SIZE);
       const key = `${row},${col}`;
+
       if (forbidden.has(key)) continue;
       if (blockedTiles.some(tile => tile.row === row && tile.col === col)) continue;
+
       blockedTiles.push({ row, col });
     }
 
@@ -212,14 +226,18 @@ function countEscapesFromPositions(me, opponent) {
   ];
 
   let count = 0;
+
   for (const dir of dirs) {
     const nr = me.row + dir.dr;
     const nc = me.col + dir.dc;
+
     if (!inBounds(nr, nc)) continue;
     if (nr === opponent.row && nc === opponent.col) continue;
-    if (blockedTiles.some(b => b.row === nr && b.col === nc)) continue;
+    if (isWallTile(nr, nc)) continue;
+
     count += 1;
   }
+
   return count;
 }
 
@@ -233,31 +251,31 @@ function evaluateBotMove(move) {
 
   let score = 0;
 
-  // Only reward adjacency if this is the LAST move
+  // Final move should strongly prefer ending adjacent
   if (state.movesRemaining === 1 && distance === 1) {
     score += 5000;
   }
 
-  // Strongly punish ending adjacent too early, because bot still has to move again
+  // Too early adjacency is bad because the bot still must continue moving
   if (state.movesRemaining > 1 && distance === 1) {
-    score -= 1200;
+    score -= 1500;
   }
 
-  // Trap pressure
+  // Pressure the player by reducing their exits
   score += (4 - playerEscapes) * 120;
 
-  // Stay mobile
+  // Keep bot flexible
   score += botEscapes * 40;
 
-  // Avoid dead ends unless final winning move
+  // Avoid dead ends unless this is the final winning step
   if (botEscapes === 0 && !(state.movesRemaining === 1 && distance === 1)) {
     score -= 500;
   }
 
-  // Stay somewhat close
+  // Controlled closeness
   score += (8 - distance) * 18;
 
-  // Mild center bias
+  // Small center bias
   const center = (SIZE - 1) / 2;
   const distToCenter = Math.abs(botPos.row - center) + Math.abs(botPos.col - center);
   score += (6 - distToCenter) * 5;
@@ -271,7 +289,7 @@ function chooseBotMove() {
 
   const playerPos = state.players[1];
 
-  // If this is the final move, take a winning tile immediately
+  // Only on the final step should the bot force adjacency
   if (state.movesRemaining === 1) {
     for (const move of moves) {
       const dist = Math.abs(move.row - playerPos.row) + Math.abs(move.col - playerPos.col);
@@ -311,6 +329,7 @@ function botTakeTurn() {
   if (state.phase !== 'move') return;
 
   const move = chooseBotMove();
+
   if (!move) {
     nextTurn();
     return;
@@ -323,16 +342,17 @@ function botTakeTurn() {
 
     onTileClick(move.row, move.col, true);
 
+    // If round ended during the move, stop
     if (!isBotTurn() || state.phase !== 'move') return;
 
+    // Keep moving until all rolled moves are consumed
     if (state.movesRemaining > 0) {
       botTakeTurn();
       return;
     }
 
-    if (state.phase === 'move') {
-      endTurnEarly(true);
-    }
+    // Only end after using all moves
+    endTurnEarly(true);
   }, BOT_THINK_DELAY);
 }
 
@@ -349,25 +369,37 @@ function animateRollButton(callback) {
 
 function renderBoard() {
   boardEl.innerHTML = '';
+
   for (let row = 0; row < SIZE; row++) {
     for (let col = 0; col < SIZE; col++) {
       const tile = document.createElement('button');
       tile.className = 'tile';
 
-      const isWall = blockedTiles.some(b => b.row === row && b.col === col);
-      if (isWall) {
+      const wall = isWallTile(row, col);
+      if (wall) {
         tile.classList.add('wall');
+
+        const top = isWallTile(row - 1, col);
+        const right = isWallTile(row, col + 1);
+        const bottom = isWallTile(row + 1, col);
+        const left = isWallTile(row, col - 1);
+
+        if (top) tile.classList.add('join-top');
+        if (right) tile.classList.add('join-right');
+        if (bottom) tile.classList.add('join-bottom');
+        if (left) tile.classList.add('join-left');
       }
 
-      tile.dataset.row = row;
-      tile.dataset.col = col;
-      tile.innerHTML = ``;
-
       const valid = state.validMoves.some(m => m.row === row && m.col === col);
-      const selected = state.selectedTile && state.selectedTile.row === row && state.selectedTile.col === col;
+      const selected = state.selectedTile &&
+        state.selectedTile.row === row &&
+        state.selectedTile.col === col;
 
       if (valid) tile.classList.add('valid');
       if (selected) tile.classList.add('selected');
+
+      tile.dataset.row = row;
+      tile.dataset.col = col;
 
       if (state.players[1].row === row && state.players[1].col === col) {
         const piece = document.createElement('div');
@@ -408,10 +440,9 @@ function renderUI() {
   }
   phaseText.textContent = phaseMsg;
 
-  const diceValueHtml = state.dice == null
-    ? '-'
-    : `<span class="dice-value-pop">${state.dice}</span>`;
-  diceText.innerHTML = `Dice: ${diceValueHtml}${state.phase === 'move' ? ` <span style="color: var(--muted);">| Moves left: ${state.movesRemaining}</span>` : ''}`;
+  diceText.textContent = state.dice == null
+    ? 'Dice: -'
+    : `Dice: ${state.dice}${state.phase === 'move' ? ` | Moves left: ${state.movesRemaining}` : ''}`;
 
   roundText.textContent = `Round ${Math.min(state.round, 3)} of 3`;
   p1Score.textContent = state.players[1].score;
@@ -427,7 +458,7 @@ function renderUI() {
 function onTileClick(row, col, byBot = false) {
   if (state.phase !== 'move') return;
   if (isBotTurn() && !byBot) return;
-  if (blockedTiles.some(b => b.row === row && b.col === col)) return;
+  if (isWallTile(row, col)) return;
 
   const isValid = state.validMoves.some(m => m.row === row && m.col === col);
   if (!isValid) return;
@@ -437,25 +468,34 @@ function onTileClick(row, col, byBot = false) {
   state.selectedTile = { row, col };
   state.movesRemaining -= 1;
 
-  addLog(`${getPlayerLabel(state.currentPlayer)} stepped to ${coordLabel({ row, col })}. ${state.movesRemaining} move(s) left.`);
+  addLog(
+    `${getPlayerLabel(state.currentPlayer)} stepped to ${coordLabel({ row, col })}. ${state.movesRemaining} move(s) left.`
+  );
 
   const opponent = getOpponent(state.currentPlayer);
+
+  // Trap check can happen immediately
   if (!hasAdjacentEscape(opponent)) {
     endRound(state.currentPlayer);
     return;
   }
 
+  // Only after ALL moves are consumed can direct-facing win apply
   if (state.movesRemaining <= 0) {
     if (isDirectlyFacing(state.currentPlayer)) {
-      addLog(`${getPlayerLabel(state.currentPlayer)} ended the turn directly facing ${getPlayerLabel(opponent)} and wins the round.`);
+      addLog(
+        `${getPlayerLabel(state.currentPlayer)} ended the turn directly facing ${getPlayerLabel(opponent)} and wins the round.`
+      );
       endRound(state.currentPlayer);
       return;
     }
+
     nextTurn();
     return;
   }
 
-  state.validMoves = getReachableTiles(state.currentPlayer, 1);
+  state.validMoves = getReachableTiles(state.currentPlayer);
+
   if (state.validMoves.length === 0) {
     addLog(`${getPlayerLabel(state.currentPlayer)} has no legal 1-tile step remaining and ends the turn.`);
     nextTurn();
@@ -469,7 +509,7 @@ function onTileClick(row, col, byBot = false) {
 function rollDice(byBot = false) {
   state.dice = Math.floor(Math.random() * 6) + 1;
   state.movesRemaining = state.dice;
-  state.validMoves = getReachableTiles(state.currentPlayer, 1);
+  state.validMoves = getReachableTiles(state.currentPlayer);
   state.selectedTile = null;
   state.phase = 'move';
 
@@ -510,13 +550,19 @@ function endTurnEarly(byBot = false) {
   if (state.phase !== 'move') return;
   if (isBotTurn() && !byBot) return;
 
+  if (state.movesRemaining > 0) {
+    return;
+  }
+
   if (isDirectlyFacing(state.currentPlayer)) {
-    addLog(`${getPlayerLabel(state.currentPlayer)} ended the turn directly facing ${getPlayerLabel(getOpponent(state.currentPlayer))} and wins the round.`);
+    addLog(
+      `${getPlayerLabel(state.currentPlayer)} ended the turn directly facing ${getPlayerLabel(getOpponent(state.currentPlayer))} and wins the round.`
+    );
     endRound(state.currentPlayer);
     return;
   }
 
-  addLog(`${getPlayerLabel(state.currentPlayer)} ended the turn with ${state.movesRemaining} unused move(s).`);
+  addLog(`${getPlayerLabel(state.currentPlayer)} ended the turn.`);
   nextTurn();
 }
 
@@ -590,6 +636,7 @@ function resetMatch() {
   state.winner = null;
   state.validMoves = [];
   state.selectedTile = null;
+  state.log = [];
 
   generateRandomBlockedTiles(12);
 
@@ -597,15 +644,39 @@ function resetMatch() {
   document.querySelector('#winnerPopup .popup-subtext').textContent = 'Start the next round when you are ready.';
   nextRoundPopupBtn.textContent = 'Next\nGame';
 
-  state.log = [];
   addLog('New match started. Player 1 goes first.');
-
   renderBoard();
   renderUI();
 
   if (isBotTurn()) {
     botTakeTurn();
   }
+}
+
+function showDicePop(value) {
+  const bubble = document.getElementById('dicePopBubble');
+  if (!bubble) return;
+
+  bubble.textContent = value;
+  bubble.classList.remove('show');
+  void bubble.offsetWidth;
+  bubble.classList.add('show');
+
+  setTimeout(() => {
+    bubble.classList.remove('show');
+  }, 900);
+}
+
+function showWinBubble(player) {
+  const bubble = document.getElementById('winBubble');
+  if (!bubble) return;
+
+  bubble.textContent = `${player === BOT_PLAYER ? 'Bot' : `Player ${player}`} Win!`;
+  bubble.style.transform = 'translate(-50%, -50%) scale(1)';
+
+  setTimeout(() => {
+    bubble.style.transform = 'translate(-50%, -50%) scale(0)';
+  }, 1500);
 }
 
 rollBtn.addEventListener('click', () => {
@@ -633,27 +704,3 @@ resetMatchBtn.addEventListener('click', () => {
 });
 
 resetMatch();
-
-function showDicePop(value) {
-  const bubble = document.getElementById('dicePopBubble');
-  bubble.textContent = value;
-
-  bubble.classList.remove('show');
-  void bubble.offsetWidth;
-  bubble.classList.add('show');
-
-  setTimeout(() => {
-    bubble.classList.remove('show');
-  }, 900);
-
-  const inlinePop = document.querySelector('.dice-value-pop');
-  if (inlinePop) {
-    inlinePop.classList.remove('show');
-    void inlinePop.offsetWidth;
-    inlinePop.classList.add('show');
-
-    setTimeout(() => {
-      inlinePop.classList.remove('show');
-    }, 900);
-  }
-}
