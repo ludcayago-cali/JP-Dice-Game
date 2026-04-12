@@ -238,24 +238,87 @@ const SIZE = 8;
       const centerBias = (3.5 - Math.abs(botPos.row - 3.5)) + (3.5 - Math.abs(botPos.col - 3.5));
       score += centerBias * 3;
 
-      return score;
+      function getAdjacentTiles(pos) {
+  const dirs = [
+    { x: 1, y: 0 },
+    { x: -1, y: 0 },
+    { x: 0, y: 1 },
+    { x: 0, y: -1 },
+  ];
+  return dirs.map(d => ({ x: pos.x + d.x, y: pos.y + d.y }));
+}
+
+function isInsideBoard(pos, size) {
+  return pos.x >= 1 && pos.x <= size && pos.y >= 1 && pos.y <= size;
+}
+
+function samePos(a, b) {
+  return a.x === b.x && a.y === b.y;
+}
+
+function isBlocked(pos, walls) {
+  return walls.some(w => samePos(w, pos));
+}
+
+function isOrthAdjacent(a, b) {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y) === 1;
+}
+
+function getLegalMovesFrom(pos, otherPlayer, walls, boardSize) {
+  return getAdjacentTiles(pos).filter(tile =>
+    isInsideBoard(tile, boardSize) &&
+    !isBlocked(tile, walls) &&
+    !samePos(tile, otherPlayer)
+  );
+}
+
+function scoreBotMove(candidate, humanPos, walls, boardSize) {
+  let score = 0;
+
+  const botMovesAfter = getLegalMovesFrom(candidate, humanPos, walls, boardSize);
+  const humanMovesAfter = getLegalMovesFrom(humanPos, candidate, walls, boardSize);
+
+  // Immediate win
+  if (isOrthAdjacent(candidate, humanPos)) score += 1000;
+
+  // Trap pressure
+  score += (4 - humanMovesAfter.length) * 120;
+
+  // Bot safety
+  score += botMovesAfter.length * 30;
+
+  // Avoid ending with no exits unless winning
+  if (botMovesAfter.length === 0 && !isOrthAdjacent(candidate, humanPos)) score -= 500;
+
+  // Prefer center
+  const center = (boardSize + 1) / 2;
+  const distToCenter = Math.abs(candidate.x - center) + Math.abs(candidate.y - center);
+  score += (10 - distToCenter);
+
+  // Prefer being near, but not recklessly
+  const distToHuman = Math.abs(candidate.x - humanPos.x) + Math.abs(candidate.y - humanPos.y);
+  score += (8 - distToHuman) * 8;
+
+  return score;
+}
+
+function chooseSmartBotMove(botPos, humanPos, walls, boardSize) {
+  const legal = getLegalMovesFrom(botPos, humanPos, walls, boardSize);
+  if (!legal.length) return null;
+
+  let best = legal[0];
+  let bestScore = -Infinity;
+
+  for (const move of legal) {
+    const score = scoreBotMove(move, humanPos, walls, boardSize);
+    if (score > bestScore) {
+      bestScore = score;
+      best = move;
     }
+  }
 
-    function chooseBotMove() {
-      if (!state.validMoves.length) return null;
-      let bestMove = state.validMoves[0];
-      let bestScore = -Infinity;
-
-      for (const move of state.validMoves) {
-        const score = evaluateBotMove(move);
-        if (score > bestScore) {
-          bestScore = score;
-          bestMove = move;
-        }
-      }
-
-      return bestMove;
-    }
+  return best;
+}
 
     function botTakeTurn() {
       if (!isBotTurn()) return;
