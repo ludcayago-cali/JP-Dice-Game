@@ -233,20 +233,29 @@ function evaluateBotMove(move) {
 
   let score = 0;
 
-  // Immediate win if bot ends adjacent
-  if (distance === 1) score += 1000;
+  // Only reward adjacency if this is the LAST move
+  if (state.movesRemaining === 1 && distance === 1) {
+    score += 5000;
+  }
 
-  // Strongly prefer moves that reduce player's escape options
+  // Strongly punish ending adjacent too early, because bot still has to move again
+  if (state.movesRemaining > 1 && distance === 1) {
+    score -= 1200;
+  }
+
+  // Trap pressure
   score += (4 - playerEscapes) * 120;
 
-  // Prefer keeping the bot mobile
+  // Stay mobile
   score += botEscapes * 40;
 
-  // Avoid dead ends unless it wins immediately
-  if (botEscapes === 0 && distance !== 1) score -= 500;
+  // Avoid dead ends unless final winning move
+  if (botEscapes === 0 && !(state.movesRemaining === 1 && distance === 1)) {
+    score -= 500;
+  }
 
-  // Controlled aggression
-  score += (8 - distance) * 20;
+  // Stay somewhat close
+  score += (8 - distance) * 18;
 
   // Mild center bias
   const center = (SIZE - 1) / 2;
@@ -258,8 +267,19 @@ function evaluateBotMove(move) {
 
 function chooseBotMove() {
   const moves = getReachableTiles(BOT_PLAYER);
-
   if (!moves.length) return null;
+
+  const playerPos = state.players[1];
+
+  // If this is the final move, take a winning tile immediately
+  if (state.movesRemaining === 1) {
+    for (const move of moves) {
+      const dist = Math.abs(move.row - playerPos.row) + Math.abs(move.col - playerPos.col);
+      if (dist === 1) {
+        return move;
+      }
+    }
+  }
 
   let bestMove = moves[0];
   let bestScore = -Infinity;
@@ -297,6 +317,7 @@ function botTakeTurn() {
   }
 
   phaseText.textContent = 'Bot is thinking...';
+
   setTimeout(() => {
     if (!isBotTurn() || state.phase !== 'move') return;
 
