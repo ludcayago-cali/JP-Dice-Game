@@ -179,7 +179,19 @@ function hasPathBetween(start, target) {
 
   return false;
 }
+function tryKeyboardMove(dr, dc) {
+  if (state.phase !== 'move') return;
+  if (isBotTurn()) return;
+  if (state.currentPlayer !== 1) return;
+  if (state.movesRemaining <= 0) return;
 
+  const current = state.players[1];
+  const nextRow = current.row + dr;
+  const nextCol = current.col + dc;
+
+  if (!inBounds(nextRow, nextCol)) return;
+  onTileClick(nextRow, nextCol);
+}
 function generateRandomBlockedTiles(count = 12) {
   const start1 = { row: 0, col: 0 };
   const start2 = { row: SIZE - 1, col: SIZE - 1 };
