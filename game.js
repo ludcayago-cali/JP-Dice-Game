@@ -616,24 +616,23 @@ resetMatch();
 function showDicePop(value) {
   const bubble = document.getElementById('dicePopBubble');
   bubble.textContent = value;
+
   bubble.classList.remove('show');
   void bubble.offsetWidth;
   bubble.classList.add('show');
+
+  setTimeout(() => {
+    bubble.classList.remove('show');
+  }, 900);
 
   const inlinePop = document.querySelector('.dice-value-pop');
   if (inlinePop) {
     inlinePop.classList.remove('show');
     void inlinePop.offsetWidth;
     inlinePop.classList.add('show');
+
+    setTimeout(() => {
+      inlinePop.classList.remove('show');
+    }, 900);
   }
-}
-
-function showWinBubble(player) {
-  const bubble = document.getElementById('winBubble');
-  bubble.textContent = `${player === BOT_PLAYER ? 'Bot' : `Player ${player}`} Win!`;
-  bubble.style.transform = 'translate(-50%, -50%) scale(1)';
-
-  setTimeout(() => {
-    bubble.style.transform = 'translate(-50%, -50%) scale(0)';
-  }, 1500);
 }
