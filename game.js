@@ -368,6 +368,33 @@ function botTakeTurn() {
   }, BOT_THINK_DELAY);
 }
 
+document.addEventListener('keydown', (e) => {
+  if (state.phase !== 'move') return;
+  if (isBotTurn()) return;
+
+  const activeTag = document.activeElement?.tagName;
+  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
+
+  switch (e.key) {
+    case 'ArrowUp':
+      e.preventDefault();
+      tryKeyboardMove(-1, 0);
+      break;
+    case 'ArrowDown':
+      e.preventDefault();
+      tryKeyboardMove(1, 0);
+      break;
+    case 'ArrowLeft':
+      e.preventDefault();
+      tryKeyboardMove(0, -1);
+      break;
+    case 'ArrowRight':
+      e.preventDefault();
+      tryKeyboardMove(0, 1);
+      break;
+  }
+});
+
 function animateRollButton(callback) {
   rollBtn.classList.remove('rolling');
   void rollBtn.offsetWidth;
