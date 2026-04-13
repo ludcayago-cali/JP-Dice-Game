@@ -741,5 +741,30 @@ resetMatchBtn.addEventListener('click', () => {
   hideWinnerPopup();
   resetMatch();
 });
+const menuToggle = document.getElementById('menuToggle');
+const closeDrawer = document.getElementById('closeDrawer');
+const sideDrawer = document.getElementById('sideDrawer');
+const drawerOverlay = document.getElementById('drawerOverlay');
 
+function openDrawer() {
+  sideDrawer.classList.add('open');
+  drawerOverlay.classList.add('show');
+}
+
+function closeDrawerMenu() {
+  sideDrawer.classList.remove('open');
+  drawerOverlay.classList.remove('show');
+}
+
+if (menuToggle) {
+  menuToggle.addEventListener('click', openDrawer);
+}
+
+if (closeDrawer) {
+  closeDrawer.addEventListener('click', closeDrawerMenu);
+}
+
+if (drawerOverlay) {
+  drawerOverlay.addEventListener('click', closeDrawerMenu);
+}
 resetMatch();
