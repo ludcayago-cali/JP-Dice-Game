@@ -903,3 +903,10 @@ button:disabled {
   font-weight: 900;
   letter-spacing: 0.08em;
 }
+#coinTossPopup {
+  display: none;
+}
+
+#coinTossPopup.show {
+  display: flex;
+}
