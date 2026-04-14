@@ -84,7 +84,19 @@ function showCoinTossPopup(text) {
     coinTossPopup.classList.remove("show");
   }, 2000);
 }
+const resultPopup = document.getElementById("resultPopup");
+const resultPopupText = document.getElementById("resultPopupText");
 
+function showResultPopup(message) {
+  if (!resultPopup || !resultPopupText) return;
+  resultPopupText.textContent = message;
+  resultPopup.classList.add("show");
+}
+
+function hideResultPopup() {
+  if (!resultPopup) return;
+  resultPopup.classList.remove("show");
+}
 function addLog(message) {
   state.log.unshift(message);
   state.log = state.log.slice(0, 20);
@@ -458,6 +470,14 @@ if (roomStatusText) roomStatusText.textContent = roomId ? `Room: ${roomId}` : "R
 
   renderBoard();
   renderUI();
+  if (room.phase === "roundOver" && room.winner) {
+  const myRole = playerRole; // "p1" or "p2"
+  const iWon = room.winner === myRole;
+
+  showResultPopup(iWon ? "YOU WIN" : "YOU LOST");
+} else {
+  hideResultPopup();
+}
 
   if (room.phase === "toss" && room.players?.p1?.connected && room.players?.p2?.connected) {
     maybeRunToss(room);
