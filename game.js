@@ -17,7 +17,11 @@ const state = {
   winner: null,
   validMoves: [],
   selectedTile: null,
-  log: []
+  log: [],
+  lastMove: null,
+  winnerAnimPlayer: null,
+  blockedAnimPlayer: null,
+  attackFlashTile: null
 };
 
 const boardEl = document.getElementById('board');
@@ -39,6 +43,11 @@ const logEl = document.getElementById('log');
 const winnerPopup = document.getElementById('winnerPopup');
 const winnerPopupText = document.getElementById('winnerPopupText');
 const nextRoundPopupBtn = document.getElementById('nextRoundPopupBtn');
+
+const menuToggle = document.getElementById('menuToggle');
+const closeDrawer = document.getElementById('closeDrawer');
+const sideDrawer = document.getElementById('sideDrawer');
+const drawerOverlay = document.getElementById('drawerOverlay');
 
 function showWinnerPopup(player) {
   winnerPopupText.textContent = `${player === BOT_PLAYER ? 'Bot' : `Player ${player}`} Wins!`;
@@ -179,19 +188,7 @@ function hasPathBetween(start, target) {
 
   return false;
 }
-function tryKeyboardMove(dr, dc) {
-  if (state.phase !== 'move') return;
-  if (isBotTurn()) return;
-  if (state.currentPlayer !== 1) return;
-  if (state.movesRemaining <= 0) return;
 
-  const current = state.players[1];
-  const nextRow = current.row + dr;
-  const nextCol = current.col + dc;
-
-  if (!inBounds(nextRow, nextCol)) return;
-  onTileClick(nextRow, nextCol);
-}
 function generateRandomBlockedTiles(count = 12) {
   const start1 = { row: 0, col: 0 };
   const start2 = { row: SIZE - 1, col: SIZE - 1 };
@@ -207,10 +204,18 @@ function generateRandomBlockedTiles(count = 12) {
     blockedTiles.length = 0;
 
     while (blockedTiles.length < count) {
-      const row = Math.floor(Math.random() * SIZE);
-      const col = Math.floor(Math.random() * SIZE);
+      const base = blockedTiles.length > 0
+        ? blockedTiles[Math.floor(Math.random() * blockedTiles.length)]
+        : {
+            row: Math.floor(Math.random() * SIZE),
+            col: Math.floor(Math.random() * SIZE)
+          };
+
+      const row = base.row + Math.floor(Math.random() * 3) - 1;
+      const col = base.col + Math.floor(Math.random() * 3) - 1;
       const key = `${row},${col}`;
 
+      if (!inBounds(row, col)) continue;
       if (forbidden.has(key)) continue;
       if (blockedTiles.some(tile => tile.row === row && tile.col === col)) continue;
 
@@ -263,31 +268,23 @@ function evaluateBotMove(move) {
 
   let score = 0;
 
-  // Final move should strongly prefer ending adjacent
   if (state.movesRemaining === 1 && distance === 1) {
     score += 5000;
   }
 
-  // Too early adjacency is bad because the bot still must continue moving
   if (state.movesRemaining > 1 && distance === 1) {
     score -= 1500;
   }
 
-  // Pressure the player by reducing their exits
   score += (4 - playerEscapes) * 120;
-
-  // Keep bot flexible
   score += botEscapes * 40;
 
-  // Avoid dead ends unless this is the final winning step
   if (botEscapes === 0 && !(state.movesRemaining === 1 && distance === 1)) {
     score -= 500;
   }
 
-  // Controlled closeness
   score += (8 - distance) * 18;
 
-  // Small center bias
   const center = (SIZE - 1) / 2;
   const distToCenter = Math.abs(botPos.row - center) + Math.abs(botPos.col - center);
   score += (6 - distToCenter) * 5;
@@ -301,7 +298,6 @@ function chooseBotMove() {
 
   const playerPos = state.players[1];
 
-  // Only on the final step should the bot force adjacency
   if (state.movesRemaining === 1) {
     for (const move of moves) {
       const dist = Math.abs(move.row - playerPos.row) + Math.abs(move.col - playerPos.col);
@@ -354,46 +350,16 @@ function botTakeTurn() {
 
     onTileClick(move.row, move.col, true);
 
-    // If round ended during the move, stop
     if (!isBotTurn() || state.phase !== 'move') return;
 
-    // Keep moving until all rolled moves are consumed
     if (state.movesRemaining > 0) {
       botTakeTurn();
       return;
     }
 
-    // Only end after using all moves
     endTurnEarly(true);
   }, BOT_THINK_DELAY);
 }
-
-document.addEventListener('keydown', (e) => {
-  if (state.phase !== 'move') return;
-  if (isBotTurn()) return;
-
-  const activeTag = document.activeElement?.tagName;
-  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
-
-  switch (e.key) {
-    case 'ArrowUp':
-      e.preventDefault();
-      tryKeyboardMove(-1, 0);
-      break;
-    case 'ArrowDown':
-      e.preventDefault();
-      tryKeyboardMove(1, 0);
-      break;
-    case 'ArrowLeft':
-      e.preventDefault();
-      tryKeyboardMove(0, -1);
-      break;
-    case 'ArrowRight':
-      e.preventDefault();
-      tryKeyboardMove(0, 1);
-      break;
-  }
-});
 
 function animateRollButton(callback) {
   rollBtn.classList.remove('rolling');
@@ -403,7 +369,7 @@ function animateRollButton(callback) {
   setTimeout(() => {
     rollBtn.classList.remove('rolling');
     callback();
-  }, 650);
+  }, 700);
 }
 
 function renderBoard() {
@@ -437,20 +403,44 @@ function renderBoard() {
       if (valid) tile.classList.add('valid');
       if (selected) tile.classList.add('selected');
 
+      if (
+        state.attackFlashTile &&
+        state.attackFlashTile.row === row &&
+        state.attackFlashTile.col === col
+      ) {
+        tile.classList.add('attack-flash');
+      }
+
       tile.dataset.row = row;
       tile.dataset.col = col;
 
       if (state.players[1].row === row && state.players[1].col === col) {
         const piece = document.createElement('div');
-        piece.className = 'piece p1';
-        piece.textContent = '1';
+        const moved =
+          state.lastMove &&
+          state.lastMove.player === 1 &&
+          state.lastMove.row === row &&
+          state.lastMove.col === col;
+        const won = state.winnerAnimPlayer === 1;
+        const blocked = state.blockedAnimPlayer === 1;
+
+        piece.className = `piece p1 ${moved ? 'move' : ''} ${won ? 'win' : ''} ${blocked ? 'blocked' : ''}`.trim();
+        piece.innerHTML = `<img src="./assets/blue.png" draggable="false" alt="Player 1">`;
         tile.appendChild(piece);
       }
 
       if (state.players[2].row === row && state.players[2].col === col) {
         const piece = document.createElement('div');
-        piece.className = 'piece p2';
-        piece.textContent = '2';
+        const moved =
+          state.lastMove &&
+          state.lastMove.player === 2 &&
+          state.lastMove.row === row &&
+          state.lastMove.col === col;
+        const won = state.winnerAnimPlayer === 2;
+        const blocked = state.blockedAnimPlayer === 2;
+
+        piece.className = `piece p2 ${moved ? 'move' : ''} ${won ? 'win' : ''} ${blocked ? 'blocked' : ''}`.trim();
+        piece.innerHTML = `<img src="./assets/red.png" draggable="false" alt="Bot">`;
         tile.appendChild(piece);
       }
 
@@ -491,7 +481,7 @@ function renderUI() {
 
   rollBtn.disabled = state.phase !== 'roll' || isBotTurn();
   endTurnBtn.disabled = state.phase !== 'move' || isBotTurn();
-  newRoundBtn.disabled = true;
+  newRoundBtn.disabled = state.phase !== 'roundOver';
 }
 
 function onTileClick(row, col, byBot = false) {
@@ -505,6 +495,7 @@ function onTileClick(row, col, byBot = false) {
   state.players[state.currentPlayer].row = row;
   state.players[state.currentPlayer].col = col;
   state.selectedTile = { row, col };
+  state.lastMove = { player: state.currentPlayer, row, col };
   state.movesRemaining -= 1;
 
   addLog(
@@ -513,15 +504,23 @@ function onTileClick(row, col, byBot = false) {
 
   const opponent = getOpponent(state.currentPlayer);
 
-  // Trap check can happen immediately
   if (!hasAdjacentEscape(opponent)) {
-    endRound(state.currentPlayer);
+    state.blockedAnimPlayer = opponent;
+    state.attackFlashTile = { row, col };
+    renderBoard();
+    renderUI();
+
+    setTimeout(() => {
+      state.blockedAnimPlayer = null;
+      endRound(state.currentPlayer);
+    }, 350);
+
     return;
   }
 
-  // Only after ALL moves are consumed can direct-facing win apply
   if (state.movesRemaining <= 0) {
     if (isDirectlyFacing(state.currentPlayer)) {
+      state.attackFlashTile = { row, col };
       addLog(
         `${getPlayerLabel(state.currentPlayer)} ended the turn directly facing ${getPlayerLabel(opponent)} and wins the round.`
       );
@@ -576,6 +575,9 @@ function nextTurn() {
   state.movesRemaining = 0;
   state.validMoves = [];
   state.selectedTile = null;
+  state.lastMove = null;
+  state.blockedAnimPlayer = null;
+  state.attackFlashTile = null;
 
   renderBoard();
   renderUI();
@@ -594,6 +596,10 @@ function endTurnEarly(byBot = false) {
   }
 
   if (isDirectlyFacing(state.currentPlayer)) {
+    state.attackFlashTile = {
+      row: state.players[state.currentPlayer].row,
+      col: state.players[state.currentPlayer].col
+    };
     addLog(
       `${getPlayerLabel(state.currentPlayer)} ended the turn directly facing ${getPlayerLabel(getOpponent(state.currentPlayer))} and wins the round.`
     );
@@ -606,6 +612,7 @@ function endTurnEarly(byBot = false) {
 }
 
 function endRound(winner) {
+  state.winnerAnimPlayer = winner;
   showWinBubble(winner);
   showWinnerPopup(winner);
 
@@ -624,15 +631,21 @@ function endRound(winner) {
     addLog(`${getPlayerLabel(winner)} wins the match.`);
     document.querySelector('#winnerPopup .popup-title').textContent = 'Match Winner';
     document.querySelector('#winnerPopup .popup-subtext').textContent = 'Tap Next Game to start a fresh match.';
-    nextRoundPopupBtn.textContent = 'New\nMatch';
+    nextRoundPopupBtn.textContent = 'New Match';
   } else {
     document.querySelector('#winnerPopup .popup-title').textContent = 'Round Winner';
     document.querySelector('#winnerPopup .popup-subtext').textContent = 'Start the next round when you are ready.';
-    nextRoundPopupBtn.textContent = 'Next\nGame';
+    nextRoundPopupBtn.textContent = 'Next Game';
   }
 
   renderBoard();
   renderUI();
+
+  setTimeout(() => {
+    state.winnerAnimPlayer = null;
+    state.attackFlashTile = null;
+    renderBoard();
+  }, 700);
 }
 
 function startNextRound() {
@@ -651,6 +664,10 @@ function startNextRound() {
   state.winner = null;
   state.validMoves = [];
   state.selectedTile = null;
+  state.lastMove = null;
+  state.winnerAnimPlayer = null;
+  state.blockedAnimPlayer = null;
+  state.attackFlashTile = null;
 
   generateRandomBlockedTiles(12);
   addLog(`Round ${state.round} started. ${getPlayerLabel(state.currentPlayer)} goes first.`);
@@ -676,12 +693,16 @@ function resetMatch() {
   state.validMoves = [];
   state.selectedTile = null;
   state.log = [];
+  state.lastMove = null;
+  state.winnerAnimPlayer = null;
+  state.blockedAnimPlayer = null;
+  state.attackFlashTile = null;
 
   generateRandomBlockedTiles(12);
 
   document.querySelector('#winnerPopup .popup-title').textContent = 'Round Winner';
   document.querySelector('#winnerPopup .popup-subtext').textContent = 'Start the next round when you are ready.';
-  nextRoundPopupBtn.textContent = 'Next\nGame';
+  nextRoundPopupBtn.textContent = 'Next Game';
 
   addLog('New match started. Player 1 goes first.');
   renderBoard();
@@ -718,6 +739,32 @@ function showWinBubble(player) {
   }, 1500);
 }
 
+function tryKeyboardMove(dr, dc) {
+  if (state.phase !== 'move') return;
+  if (isBotTurn()) return;
+  if (state.currentPlayer !== 1) return;
+  if (state.movesRemaining <= 0) return;
+
+  const current = state.players[1];
+  const nextRow = current.row + dr;
+  const nextCol = current.col + dc;
+
+  if (!inBounds(nextRow, nextCol)) return;
+  onTileClick(nextRow, nextCol);
+}
+
+function openDrawer() {
+  if (!sideDrawer || !drawerOverlay) return;
+  sideDrawer.classList.add('open');
+  drawerOverlay.classList.add('show');
+}
+
+function closeDrawerMenu() {
+  if (!sideDrawer || !drawerOverlay) return;
+  sideDrawer.classList.remove('open');
+  drawerOverlay.classList.remove('show');
+}
+
 rollBtn.addEventListener('click', () => {
   if (state.phase !== 'roll' || isBotTurn()) return;
   animateRollButton(() => {
@@ -741,20 +788,41 @@ resetMatchBtn.addEventListener('click', () => {
   hideWinnerPopup();
   resetMatch();
 });
-const menuToggle = document.getElementById('menuToggle');
-const closeDrawer = document.getElementById('closeDrawer');
-const sideDrawer = document.getElementById('sideDrawer');
-const drawerOverlay = document.getElementById('drawerOverlay');
 
-function openDrawer() {
-  sideDrawer.classList.add('open');
-  drawerOverlay.classList.add('show');
-}
+document.addEventListener('keydown', (e) => {
+  if (state.phase !== 'move') return;
+  if (isBotTurn()) return;
 
-function closeDrawerMenu() {
-  sideDrawer.classList.remove('open');
-  drawerOverlay.classList.remove('show');
-}
+  const activeTag = document.activeElement?.tagName;
+  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
+
+  switch (e.key) {
+    case 'ArrowUp':
+    case 'w':
+    case 'W':
+      e.preventDefault();
+      tryKeyboardMove(-1, 0);
+      break;
+    case 'ArrowDown':
+    case 's':
+    case 'S':
+      e.preventDefault();
+      tryKeyboardMove(1, 0);
+      break;
+    case 'ArrowLeft':
+    case 'a':
+    case 'A':
+      e.preventDefault();
+      tryKeyboardMove(0, -1);
+      break;
+    case 'ArrowRight':
+    case 'd':
+    case 'D':
+      e.preventDefault();
+      tryKeyboardMove(0, 1);
+      break;
+  }
+});
 
 if (menuToggle) {
   menuToggle.addEventListener('click', openDrawer);
@@ -767,4 +835,5 @@ if (closeDrawer) {
 if (drawerOverlay) {
   drawerOverlay.addEventListener('click', closeDrawerMenu);
 }
+
 resetMatch();
