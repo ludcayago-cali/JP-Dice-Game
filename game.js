@@ -446,8 +446,9 @@ function syncRoomIntoLocal(room) {
   blockedTiles.length = 0;
   (room.blockedTiles || []).forEach(t => blockedTiles.push({ row: t.row, col: t.col }));
 
-  p1NameEl.textContent = room.players?.p1?.name || "Player 1";
-  p2NameEl.textContent = room.players?.p2?.name || "Player 2";
+if (p1NameEl) p1NameEl.textContent = room.players?.p1?.name || "Player 1";
+if (p2NameEl) p2NameEl.textContent = room.players?.p2?.name || "Player 2";
+if (roomStatusText) roomStatusText.textContent = roomId ? `Room: ${roomId}` : "Room: -";
 
   if (room.phase === "move" && isMyTurn()) {
     state.validMoves = getReachableTiles(localRoleToNumber());
