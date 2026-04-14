@@ -1,16 +1,26 @@
+import { db, ref, set, update, get, onValue, remove } from "./firebase.js";
+
 const SIZE = 8;
 const WIN_ROUNDS = 2;
 const BOT_PLAYER = 2;
 const BOT_THINK_DELAY = 500;
 const blockedTiles = [];
 
+const roomId = localStorage.getItem("roomId");
+const playerRole = localStorage.getItem("playerRole");
+const playerName = localStorage.getItem("playerName") || "";
+const isMultiplayer = !!roomId && !!playerRole;
+
+let roomState = null;
+let tossShownLocally = false;
+
 const state = {
   players: {
-    1: { row: 0, col: 0, score: 0 },
-    2: { row: SIZE - 1, col: SIZE - 1, score: 0 }
+    1: { row: 0, col: 0, score: 0, connected: true },
+    2: { row: SIZE - 1, col: SIZE - 1, score: 0, connected: !isMultiplayer }
   },
   currentPlayer: 1,
-  phase: 'roll', // roll | move | roundOver | matchOver
+  phase: isMultiplayer ? "waiting" : "roll",
   dice: null,
   movesRemaining: 0,
   round: 1,
@@ -24,33 +34,41 @@ const state = {
   attackFlashTile: null
 };
 
-const boardEl = document.getElementById('board');
-const rollBtn = document.getElementById('rollBtn');
-const endTurnBtn = document.getElementById('endTurnBtn');
-const newRoundBtn = document.getElementById('newRoundBtn');
-const resetMatchBtn = document.getElementById('resetMatchBtn');
+const boardEl = document.getElementById("board");
+const rollBtn = document.getElementById("rollBtn");
+const endTurnBtn = document.getElementById("endTurnBtn");
+const newRoundBtn = document.getElementById("newRoundBtn");
+const resetMatchBtn = document.getElementById("resetMatchBtn");
+const leaveRoomBtn = document.getElementById("leaveRoomBtn");
 
-const turnText = document.getElementById('turnText');
-const phaseText = document.getElementById('phaseText');
-const diceText = document.getElementById('diceText');
-const roundText = document.getElementById('roundText');
-const p1Score = document.getElementById('p1Score');
-const p2Score = document.getElementById('p2Score');
-const p1Pos = document.getElementById('p1Pos');
-const p2Pos = document.getElementById('p2Pos');
-const logEl = document.getElementById('log');
+const turnText = document.getElementById("turnText");
+const phaseText = document.getElementById("phaseText");
+const diceText = document.getElementById("diceText");
+const roundText = document.getElementById("roundText");
+const roomStatusText = document.getElementById("roomStatusText");
+const p1Score = document.getElementById("p1Score");
+const p2Score = document.getElementById("p2Score");
+const p1Pos = document.getElementById("p1Pos");
+const p2Pos = document.getElementById("p2Pos");
+const p1NameEl = document.getElementById("p1Name");
+const p2NameEl = document.getElementById("p2Name");
+const logEl = document.getElementById("log");
 
-const winnerPopup = document.getElementById('winnerPopup');
-const winnerPopupText = document.getElementById('winnerPopupText');
-const nextRoundPopupBtn = document.getElementById('nextRoundPopupBtn');
+const winnerPopup = document.getElementById("winnerPopup");
+const winnerPopupText = document.getElementById("winnerPopupText");
+const nextRoundPopupBtn = document.getElementById("nextRoundPopupBtn");
+
+const coinTossPopup = document.getElementById("coinTossPopup");
+const coinTossText = document.getElementById("coinTossText");
 
 const menuToggle = document.getElementById('menuToggle');
+const menuToggleInline = document.getElementById('menuToggleInline');
 const closeDrawer = document.getElementById('closeDrawer');
 const sideDrawer = document.getElementById('sideDrawer');
 const drawerOverlay = document.getElementById('drawerOverlay');
 
 function showWinnerPopup(player) {
-  winnerPopupText.textContent = `${player === BOT_PLAYER ? 'Bot' : `Player ${player}`} Wins!`;
+  winnerPopupText.textContent = `${getPlayerLabel(player)} Wins!`;
   winnerPopup.classList.add('show');
 }
 
@@ -58,34 +76,47 @@ function hideWinnerPopup() {
   winnerPopup.classList.remove('show');
 }
 
+function showCoinTossPopup(text) {
+  if (!coinTossPopup) return;
+  coinTossText.textContent = text;
+  coinTossPopup.classList.add("show");
+  setTimeout(() => {
+    coinTossPopup.classList.remove("show");
+  }, 2000);
+}
+
 function addLog(message) {
   state.log.unshift(message);
-  state.log = state.log.slice(0, 16);
+  state.log = state.log.slice(0, 20);
   renderLog();
 }
 
 function renderLog() {
-  logEl.innerHTML = state.log
-    .map(entry => `<div class="log-entry">${entry}</div>`)
-    .join('');
+  if (!logEl) return;
+  logEl.innerHTML = state.log.map(entry => `<div class="log-entry">${entry}</div>`).join("");
 }
 
 function getOpponent(player) {
   return player === 1 ? 2 : 1;
 }
 
-function isBotTurn() {
-  return state.currentPlayer === BOT_PLAYER &&
-    state.phase !== 'roundOver' &&
-    state.phase !== 'matchOver';
+function localRoleToNumber() {
+  return playerRole === "p1" ? 1 : 2;
+}
+
+function isMyTurn() {
+  if (!isMultiplayer) return state.currentPlayer === 1;
+  return roomState?.turn === playerRole;
+}
+
+function bothPlayersReady() {
+  if (!isMultiplayer) return true;
+  return !!(roomState?.players?.p1?.connected && roomState?.players?.p2?.connected);
 }
 
 function getPlayerLabel(player) {
-  return player === BOT_PLAYER ? 'Bot' : `Player ${player}`;
-}
-
-function samePos(a, b) {
-  return a.row === b.row && a.col === b.col;
+  if (player === 1) return p1NameEl?.textContent || "Player 1";
+  return p2NameEl?.textContent || "Player 2";
 }
 
 function inBounds(row, col) {
@@ -117,7 +148,7 @@ function getReachableTiles(player) {
     const nc = start.col + dir.dc;
 
     if (!inBounds(nr, nc)) continue;
-    if (nr === opponent.row && nc === opponent.col) continue;
+    if (state.players[getOpponent(player)].connected && nr === opponent.row && nc === opponent.col) continue;
     if (isWallTile(nr, nc)) continue;
 
     reachable.push({ row: nr, col: nc });
@@ -141,7 +172,7 @@ function hasAdjacentEscape(player) {
     const nc = me.col + dir.dc;
 
     if (!inBounds(nr, nc)) continue;
-    if (nr === opponent.row && nc === opponent.col) continue;
+    if (state.players[getOpponent(player)].connected && nr === opponent.row && nc === opponent.col) continue;
     if (isWallTile(nr, nc)) continue;
 
     return true;
@@ -151,6 +182,7 @@ function hasAdjacentEscape(player) {
 }
 
 function isDirectlyFacing(player) {
+  if (!state.players[getOpponent(player)].connected) return false;
   const me = state.players[player];
   const opponent = state.players[getOpponent(player)];
   return Math.abs(me.row - opponent.row) + Math.abs(me.col - opponent.col) === 1;
@@ -168,9 +200,7 @@ function hasPathBetween(start, target) {
 
   while (queue.length) {
     const current = queue.shift();
-    if (current.row === target.row && current.col === target.col) {
-      return true;
-    }
+    if (current.row === target.row && current.col === target.col) return true;
 
     for (const dir of dirs) {
       const nr = current.row + dir.dr;
@@ -192,10 +222,7 @@ function hasPathBetween(start, target) {
 function generateRandomBlockedTiles(count = 18) {
   const start1 = { row: 0, col: 0 };
   const start2 = { row: SIZE - 1, col: SIZE - 1 };
-  const forbidden = new Set([
-    `0,0`,
-    `${SIZE - 1},${SIZE - 1}`
-  ]);
+  const forbidden = new Set([`0,0`, `${SIZE - 1},${SIZE - 1}`]);
 
   let success = false;
 
@@ -205,9 +232,7 @@ function generateRandomBlockedTiles(count = 18) {
     while (blockedTiles.length < count) {
       let row, col;
 
-      const shouldCluster =
-        blockedTiles.length > 0 &&
-        Math.random() < 0.25;
+      const shouldCluster = blockedTiles.length > 0 && Math.random() < 0.25;
 
       if (shouldCluster) {
         const base = blockedTiles[Math.floor(Math.random() * blockedTiles.length)];
@@ -235,7 +260,6 @@ function generateRandomBlockedTiles(count = 18) {
 
   if (!success) {
     blockedTiles.length = 0;
-
     while (blockedTiles.length < count) {
       const row = Math.floor(Math.random() * SIZE);
       const col = Math.floor(Math.random() * SIZE);
@@ -247,137 +271,38 @@ function generateRandomBlockedTiles(count = 18) {
       blockedTiles.push({ row, col });
     }
   }
+
+  return blockedTiles.map(t => ({ row: t.row, col: t.col }));
 }
 
 function coordLabel(pos) {
   return `(${pos.row + 1},${pos.col + 1})`;
 }
 
-function countEscapesFromPositions(me, opponent) {
-  const dirs = [
-    { dr: -1, dc: 0 },
-    { dr: 1, dc: 0 },
-    { dr: 0, dc: -1 },
-    { dr: 0, dc: 1 }
-  ];
+function showDicePop(value) {
+  const bubble = document.getElementById('dicePopBubble');
+  if (!bubble) return;
 
-  let count = 0;
-
-  for (const dir of dirs) {
-    const nr = me.row + dir.dr;
-    const nc = me.col + dir.dc;
-
-    if (!inBounds(nr, nc)) continue;
-    if (nr === opponent.row && nc === opponent.col) continue;
-    if (isWallTile(nr, nc)) continue;
-
-    count += 1;
-  }
-
-  return count;
-}
-
-function evaluateBotMove(move) {
-  const botPos = { row: move.row, col: move.col };
-  const playerPos = state.players[1];
-
-  const distance = manhattan(botPos, playerPos);
-  const playerEscapes = countEscapesFromPositions(playerPos, botPos);
-  const botEscapes = countEscapesFromPositions(botPos, playerPos);
-
-  let score = 0;
-
-  if (state.movesRemaining === 1 && distance === 1) {
-    score += 5000;
-  }
-
-  if (state.movesRemaining > 1 && distance === 1) {
-    score -= 1500;
-  }
-
-  score += (4 - playerEscapes) * 120;
-  score += botEscapes * 40;
-
-  if (botEscapes === 0 && !(state.movesRemaining === 1 && distance === 1)) {
-    score -= 500;
-  }
-
-  score += (8 - distance) * 18;
-
-  const center = (SIZE - 1) / 2;
-  const distToCenter = Math.abs(botPos.row - center) + Math.abs(botPos.col - center);
-  score += (6 - distToCenter) * 5;
-
-  return score;
-}
-
-function chooseBotMove() {
-  const moves = getReachableTiles(BOT_PLAYER);
-  if (!moves.length) return null;
-
-  const playerPos = state.players[1];
-
-  if (state.movesRemaining === 1) {
-    for (const move of moves) {
-      const dist = Math.abs(move.row - playerPos.row) + Math.abs(move.col - playerPos.col);
-      if (dist === 1) {
-        return move;
-      }
-    }
-  }
-
-  let bestMove = moves[0];
-  let bestScore = -Infinity;
-
-  for (const move of moves) {
-    const score = evaluateBotMove(move);
-    if (score > bestScore) {
-      bestScore = score;
-      bestMove = move;
-    }
-  }
-
-  return bestMove;
-}
-
-function botTakeTurn() {
-  if (!isBotTurn()) return;
-
-  if (state.phase === 'roll') {
-    phaseText.textContent = 'Bot is thinking...';
-    setTimeout(() => {
-      if (isBotTurn() && state.phase === 'roll') {
-        rollDice(true);
-      }
-    }, BOT_THINK_DELAY);
-    return;
-  }
-
-  if (state.phase !== 'move') return;
-
-  const move = chooseBotMove();
-
-  if (!move) {
-    nextTurn();
-    return;
-  }
-
-  phaseText.textContent = 'Bot is thinking...';
+  bubble.textContent = value;
+  bubble.classList.remove('show');
+  void bubble.offsetWidth;
+  bubble.classList.add('show');
 
   setTimeout(() => {
-    if (!isBotTurn() || state.phase !== 'move') return;
+    bubble.classList.remove('show');
+  }, 900);
+}
 
-    onTileClick(move.row, move.col, true);
+function showWinBubble(player) {
+  const bubble = document.getElementById('winBubble');
+  if (!bubble) return;
 
-    if (!isBotTurn() || state.phase !== 'move') return;
+  bubble.textContent = `${getPlayerLabel(player)} Win!`;
+  bubble.style.transform = 'translate(-50%, -50%) scale(1)';
 
-    if (state.movesRemaining > 0) {
-      botTakeTurn();
-      return;
-    }
-
-    endTurnEarly(true);
-  }, BOT_THINK_DELAY);
+  setTimeout(() => {
+    bubble.style.transform = 'translate(-50%, -50%) scale(0)';
+  }, 1500);
 }
 
 function animateRollButton(callback) {
@@ -392,6 +317,7 @@ function animateRollButton(callback) {
 }
 
 function renderBoard() {
+  if (!boardEl) return;
   boardEl.innerHTML = '';
 
   for (let row = 0; row < SIZE; row++) {
@@ -415,51 +341,32 @@ function renderBoard() {
       }
 
       const valid = state.validMoves.some(m => m.row === row && m.col === col);
-      const selected = state.selectedTile &&
-        state.selectedTile.row === row &&
-        state.selectedTile.col === col;
+      const selected = state.selectedTile && state.selectedTile.row === row && state.selectedTile.col === col;
 
       if (valid) tile.classList.add('valid');
       if (selected) tile.classList.add('selected');
 
-      if (
-        state.attackFlashTile &&
-        state.attackFlashTile.row === row &&
-        state.attackFlashTile.col === col
-      ) {
+      if (state.attackFlashTile && state.attackFlashTile.row === row && state.attackFlashTile.col === col) {
         tile.classList.add('attack-flash');
       }
 
-      tile.dataset.row = row;
-      tile.dataset.col = col;
-
-      if (state.players[1].row === row && state.players[1].col === col) {
+      if (state.players[1].connected && state.players[1].row === row && state.players[1].col === col) {
         const piece = document.createElement('div');
-        const moved =
-          state.lastMove &&
-          state.lastMove.player === 1 &&
-          state.lastMove.row === row &&
-          state.lastMove.col === col;
+        const moved = state.lastMove && state.lastMove.player === 1 && state.lastMove.row === row && state.lastMove.col === col;
         const won = state.winnerAnimPlayer === 1;
         const blocked = state.blockedAnimPlayer === 1;
-
         piece.className = `piece p1 ${moved ? 'move' : ''} ${won ? 'win' : ''} ${blocked ? 'blocked' : ''}`.trim();
         piece.innerHTML = `<img src="./blue-removebg-preview.png" draggable="false" alt="Player 1">`;
         tile.appendChild(piece);
       }
 
-      if (state.players[2].row === row && state.players[2].col === col) {
+      if (state.players[2].connected && state.players[2].row === row && state.players[2].col === col) {
         const piece = document.createElement('div');
-        const moved =
-          state.lastMove &&
-          state.lastMove.player === 2 &&
-          state.lastMove.row === row &&
-          state.lastMove.col === col;
+        const moved = state.lastMove && state.lastMove.player === 2 && state.lastMove.row === row && state.lastMove.col === col;
         const won = state.winnerAnimPlayer === 2;
         const blocked = state.blockedAnimPlayer === 2;
-
         piece.className = `piece p2 ${moved ? 'move' : ''} ${won ? 'win' : ''} ${blocked ? 'blocked' : ''}`.trim();
-        piece.innerHTML = `<img src="./red-removebg-preview.png" draggable="false" alt="Bot">`;
+        piece.innerHTML = `<img src="./red-removebg-preview.png" draggable="false" alt="Player 2">`;
         tile.appendChild(piece);
       }
 
@@ -470,389 +377,370 @@ function renderBoard() {
 }
 
 function renderUI() {
+  if (!turnText) return;
+
+  const waitingMsg = isMultiplayer && !bothPlayersReady();
+
   turnText.textContent = state.phase === 'matchOver'
     ? `${getPlayerLabel(state.winner)} wins the match`
-    : state.phase === 'roundOver'
-      ? `${getPlayerLabel(state.winner)} wins Round ${state.round}`
-      : `${getPlayerLabel(state.currentPlayer)} turn`;
+    : waitingMsg
+      ? "Waiting for Player 2..."
+      : state.phase === 'roundOver'
+        ? `${getPlayerLabel(state.winner)} wins Round ${state.round}`
+        : `${getPlayerLabel(state.currentPlayer)} turn`;
 
   let phaseMsg = '';
-  if (state.phase === 'roll') {
-    phaseMsg = 'Click Roll Dice to begin.';
+  if (waitingMsg) {
+    phaseMsg = 'Waiting for Player 2 to join.';
+  } else if (state.phase === 'waiting') {
+    phaseMsg = 'Waiting room active.';
+  } else if (state.phase === 'toss') {
+    phaseMsg = 'Coin toss in progress...';
+  } else if (state.phase === 'roll') {
+    phaseMsg = isMyTurn() ? 'Click Roll Dice to begin.' : 'Waiting for the other player.';
   } else if (state.phase === 'move') {
-    phaseMsg = 'Click a green tile to move, or end turn without moving.';
+    phaseMsg = isMyTurn() ? 'Click a green tile to move.' : 'Opponent is moving.';
   } else if (state.phase === 'roundOver') {
     phaseMsg = 'Round complete. Start the next round.';
   } else {
-    phaseMsg = 'Match complete. Press Reset Match to play again.';
+    phaseMsg = 'Match complete.';
   }
+
   phaseText.textContent = phaseMsg;
+  diceText.textContent = state.dice == null ? 'Dice: -' : `Dice: ${state.dice} | Moves left: ${state.movesRemaining}`;
+  roundText.textContent = `Round ${state.round} of 3`;
+  if (roomStatusText) roomStatusText.textContent = roomId ? `Room: ${roomId}` : 'Room: -';
 
-  diceText.textContent = state.dice == null
-    ? 'Dice: -'
-    : `Dice: ${state.dice}${state.phase === 'move' ? ` | Moves left: ${state.movesRemaining}` : ''}`;
-
-  roundText.textContent = `Round ${Math.min(state.round, 3)} of 3`;
-  p1Score.textContent = state.players[1].score;
-  p2Score.textContent = state.players[2].score;
   p1Pos.textContent = coordLabel(state.players[1]);
-  p2Pos.textContent = coordLabel(state.players[2]);
+  p2Pos.textContent = state.players[2].connected ? coordLabel(state.players[2]) : '(-,-)';
+  p1Score.textContent = state.players[1].score || 0;
+  p2Score.textContent = state.players[2].score || 0;
 
-  rollBtn.disabled = state.phase !== 'roll' || isBotTurn();
-  endTurnBtn.disabled = state.phase !== 'move' || isBotTurn();
-  newRoundBtn.disabled = state.phase !== 'roundOver';
+  const canRoll = !waitingMsg && state.phase === "roll" && isMyTurn();
+  const canEnd = !waitingMsg && state.phase === "move" && isMyTurn() && state.movesRemaining <= 0;
+
+  rollBtn.disabled = !canRoll;
+  endTurnBtn.disabled = !canEnd;
+  newRoundBtn.disabled = state.phase !== "roundOver" || (isMultiplayer && !isMyTurn());
 }
 
-function onTileClick(row, col, byBot = false) {
+function syncRoomIntoLocal(room) {
+  roomState = room;
+
+  state.phase = room.phase || "waiting";
+  state.round = room.round || 1;
+  state.dice = room.dice ?? null;
+  state.movesRemaining = room.movesRemaining ?? 0;
+  state.currentPlayer = room.turn === "p2" ? 2 : 1;
+
+  state.players[1].row = room.players?.p1?.row ?? 0;
+  state.players[1].col = room.players?.p1?.col ?? 0;
+  state.players[1].connected = !!room.players?.p1?.connected;
+  state.players[1].score = room.scores?.p1 ?? 0;
+
+  state.players[2].row = room.players?.p2?.row ?? 7;
+  state.players[2].col = room.players?.p2?.col ?? 7;
+  state.players[2].connected = !!room.players?.p2?.connected;
+  state.players[2].score = room.scores?.p2 ?? 0;
+
+  blockedTiles.length = 0;
+  (room.blockedTiles || []).forEach(t => blockedTiles.push({ row: t.row, col: t.col }));
+
+  p1NameEl.textContent = room.players?.p1?.name || "Player 1";
+  p2NameEl.textContent = room.players?.p2?.name || "Player 2";
+
+  if (room.phase === "move" && isMyTurn()) {
+    state.validMoves = getReachableTiles(localRoleToNumber());
+  } else {
+    state.validMoves = [];
+  }
+
+  renderBoard();
+  renderUI();
+
+  if (room.phase === "toss" && room.players?.p1?.connected && room.players?.p2?.connected) {
+    maybeRunToss(room);
+  }
+
+  if (room.toss?.shown && room.toss?.result && !tossShownLocally) {
+    tossShownLocally = true;
+    const starterName = room.toss.result === "p1"
+      ? (room.players?.p1?.name || "Player 1")
+      : (room.players?.p2?.name || "Player 2");
+    showCoinTossPopup(`${starterName} goes first!`);
+  }
+}
+
+async function maybeRunToss(room) {
+  if (playerRole !== "p1") return;
+  if (room.toss?.result) return;
+
+  const starter = Math.random() < 0.5 ? "p1" : "p2";
+  const tiles = generateRandomBlockedTiles(18);
+
+  await update(ref(db, `rooms/${roomId}`), {
+    status: "playing",
+    phase: "roll",
+    turn: starter,
+    dice: null,
+    movesRemaining: 0,
+    blockedTiles: tiles,
+    "toss/result": starter,
+    "toss/shown": true,
+    "scores/p1": room.scores?.p1 ?? 0,
+    "scores/p2": room.scores?.p2 ?? 0
+  });
+}
+
+async function writeRoomPatch(patch) {
+  if (!isMultiplayer || !roomId) return;
+  await update(ref(db, `rooms/${roomId}`), patch);
+}
+
+async function onTileClick(row, col) {
   if (state.phase !== 'move') return;
-  if (isBotTurn() && !byBot) return;
+  if (!isMyTurn()) return;
   if (isWallTile(row, col)) return;
 
-  const isValid = state.validMoves.some(m => m.row === row && m.col === col);
+  const me = localRoleToNumber();
+  const opponent = getOpponent(me);
+
+  const isValid = getReachableTiles(me).some(m => m.row === row && m.col === col);
   if (!isValid) return;
 
-  state.players[state.currentPlayer].row = row;
-  state.players[state.currentPlayer].col = col;
-  state.selectedTile = { row, col };
-  state.lastMove = { player: state.currentPlayer, row, col };
-  state.movesRemaining -= 1;
+  const newMovesRemaining = state.movesRemaining - 1;
 
-  addLog(
-    `${getPlayerLabel(state.currentPlayer)} stepped to ${coordLabel({ row, col })}. ${state.movesRemaining} move(s) left.`
-  );
+  const newMe = { row, col };
+  const other = { row: state.players[opponent].row, col: state.players[opponent].col };
 
-  const opponent = getOpponent(state.currentPlayer);
+  let patch = {
+    dice: state.dice,
+    movesRemaining: newMovesRemaining,
+    [`players/${playerRole}/row`]: row,
+    [`players/${playerRole}/col`]: col
+  };
 
-  if (!hasAdjacentEscape(opponent)) {
-    state.blockedAnimPlayer = opponent;
-    state.attackFlashTile = { row, col };
-    renderBoard();
-    renderUI();
+  const tempPlayers = {
+    1: { ...state.players[1] },
+    2: { ...state.players[2] }
+  };
+  tempPlayers[me].row = row;
+  tempPlayers[me].col = col;
 
-    setTimeout(() => {
-      state.blockedAnimPlayer = null;
-      endRound(state.currentPlayer);
-    }, 350);
+  state.lastMove = { player: me, row, col };
 
-    return;
-  }
-
-  if (state.movesRemaining <= 0) {
-    if (isDirectlyFacing(state.currentPlayer)) {
-      state.attackFlashTile = { row, col };
-      addLog(
-        `${getPlayerLabel(state.currentPlayer)} ended the turn directly facing ${getPlayerLabel(opponent)} and wins the round.`
-      );
-      endRound(state.currentPlayer);
-      return;
-    }
-
-    nextTurn();
-    return;
-  }
-
-  state.validMoves = getReachableTiles(state.currentPlayer);
-
-  if (state.validMoves.length === 0) {
-    addLog(`${getPlayerLabel(state.currentPlayer)} has no legal 1-tile step remaining and ends the turn.`);
-    nextTurn();
-    return;
-  }
-
-  renderBoard();
-  renderUI();
-}
-
-function rollDice(byBot = false) {
-  state.dice = Math.floor(Math.random() * 6) + 1;
-  state.movesRemaining = state.dice;
-  state.validMoves = getReachableTiles(state.currentPlayer);
-  state.selectedTile = null;
-  state.phase = 'move';
-
-  addLog(`${getPlayerLabel(state.currentPlayer)} rolled a ${state.dice}.`);
-  showDicePop(state.dice);
-
-  if (state.validMoves.length === 0) {
-    addLog(`${getPlayerLabel(state.currentPlayer)} has no legal 1-tile move and ends the turn.`);
-    nextTurn();
-    return;
-  }
-
-  renderBoard();
-  renderUI();
-
-  if (byBot && isBotTurn()) {
-    botTakeTurn();
-  }
-}
-
-function nextTurn() {
-  state.currentPlayer = getOpponent(state.currentPlayer);
-  state.phase = 'roll';
-  state.dice = null;
-  state.movesRemaining = 0;
-  state.validMoves = [];
-  state.selectedTile = null;
-  state.lastMove = null;
-  state.blockedAnimPlayer = null;
-  state.attackFlashTile = null;
-
-  renderBoard();
-  renderUI();
-
-  if (isBotTurn()) {
-    botTakeTurn();
-  }
-}
-
-function endTurnEarly(byBot = false) {
-  if (state.phase !== 'move') return;
-  if (isBotTurn() && !byBot) return;
-
-  if (state.movesRemaining > 0) {
-    return;
-  }
-
-  if (isDirectlyFacing(state.currentPlayer)) {
-    state.attackFlashTile = {
-      row: state.players[state.currentPlayer].row,
-      col: state.players[state.currentPlayer].col
+  if (state.players[opponent].connected && !hasEscapeForPatch(opponent, tempPlayers)) {
+    const scoreKey = me === 1 ? "scores/p1" : "scores/p2";
+    patch = {
+      ...patch,
+      phase: "roundOver",
+      winner: me === 1 ? "p1" : "p2",
+      [scoreKey]: (roomState?.scores?.[me === 1 ? "p1" : "p2"] ?? 0) + 1
     };
-    addLog(
-      `${getPlayerLabel(state.currentPlayer)} ended the turn directly facing ${getPlayerLabel(getOpponent(state.currentPlayer))} and wins the round.`
-    );
-    endRound(state.currentPlayer);
-    return;
+  } else if (newMovesRemaining <= 0) {
+    if (state.players[opponent].connected && Math.abs(row - other.row) + Math.abs(col - other.col) === 1) {
+      const scoreKey = me === 1 ? "scores/p1" : "scores/p2";
+      patch = {
+        ...patch,
+        phase: "roundOver",
+        winner: me === 1 ? "p1" : "p2",
+        [scoreKey]: (roomState?.scores?.[me === 1 ? "p1" : "p2"] ?? 0) + 1
+      };
+    } else {
+      patch = {
+        ...patch,
+        turn: playerRole === "p1" ? "p2" : "p1",
+        phase: "roll",
+        dice: null,
+        movesRemaining: 0
+      };
+    }
   }
 
-  addLog(`${getPlayerLabel(state.currentPlayer)} ended the turn.`);
-  nextTurn();
+  await writeRoomPatch(patch);
 }
 
-function endRound(winner) {
-  state.winnerAnimPlayer = winner;
-  showWinBubble(winner);
-  showWinnerPopup(winner);
+function hasEscapeForPatch(player, tempPlayers) {
+  const me = tempPlayers[player];
+  const opponent = tempPlayers[getOpponent(player)];
+  const dirs = [
+    { dr: -1, dc: 0 },
+    { dr: 1, dc: 0 },
+    { dr: 0, dc: -1 },
+    { dr: 0, dc: 1 }
+  ];
 
-  state.players[winner].score += 1;
-  state.winner = winner;
-  state.phase = 'roundOver';
-  state.dice = null;
-  state.movesRemaining = 0;
-  state.validMoves = [];
-  state.selectedTile = null;
+  for (const dir of dirs) {
+    const nr = me.row + dir.dr;
+    const nc = me.col + dir.dc;
+    if (!inBounds(nr, nc)) continue;
+    if (tempPlayers[getOpponent(player)].connected && nr === opponent.row && nc === opponent.col) continue;
+    if (isWallTile(nr, nc)) continue;
+    return true;
+  }
 
-  addLog(`${getPlayerLabel(winner)} trapped ${getPlayerLabel(getOpponent(winner))} and won Round ${state.round}.`);
+  return false;
+}
 
-  if (state.players[winner].score >= WIN_ROUNDS) {
-    state.phase = 'matchOver';
-    addLog(`${getPlayerLabel(winner)} wins the match.`);
-    document.querySelector('#winnerPopup .popup-title').textContent = 'Match Winner';
-    document.querySelector('#winnerPopup .popup-subtext').textContent = 'Tap Next Game to start a fresh match.';
-    nextRoundPopupBtn.textContent = 'New Match';
+async function rollDiceAction() {
+  if (!isMyTurn()) return;
+  const roll = Math.floor(Math.random() * 6) + 1;
+  showDicePop(roll);
+
+  await writeRoomPatch({
+    dice: roll,
+    movesRemaining: roll,
+    phase: "move"
+  });
+}
+
+async function endTurnEarly() {
+  if (!isMyTurn()) return;
+  if (state.movesRemaining > 0) return;
+
+  await writeRoomPatch({
+    turn: playerRole === "p1" ? "p2" : "p1",
+    phase: "roll",
+    dice: null,
+    movesRemaining: 0
+  });
+}
+
+async function startNextRound() {
+  if (!roomState) return;
+  if (!isMyTurn()) return;
+
+  const starter = roomState.round % 2 === 1 ? "p2" : "p1";
+  const tiles = generateRandomBlockedTiles(18);
+
+  await writeRoomPatch({
+    round: (roomState.round || 1) + 1,
+    phase: "roll",
+    turn: starter,
+    dice: null,
+    movesRemaining: 0,
+    winner: null,
+    blockedTiles: tiles,
+    "players/p1/row": 0,
+    "players/p1/col": 0,
+    "players/p2/row": 7,
+    "players/p2/col": 7
+  });
+}
+
+async function leaveRoom() {
+  if (!isMultiplayer || !roomId) return;
+
+  localStorage.removeItem("roomId");
+  localStorage.removeItem("playerRole");
+  localStorage.removeItem("playerName");
+
+  if (playerRole === "p1") {
+    await remove(ref(db, `rooms/${roomId}`));
   } else {
-    document.querySelector('#winnerPopup .popup-title').textContent = 'Round Winner';
-    document.querySelector('#winnerPopup .popup-subtext').textContent = 'Start the next round when you are ready.';
-    nextRoundPopupBtn.textContent = 'Next Game';
+    await update(ref(db, `rooms/${roomId}`), {
+      status: "waiting",
+      phase: "waiting",
+      turn: null,
+      "players/p2": {
+        name: "",
+        row: 7,
+        col: 7,
+        connected: false
+      },
+      "toss/result": null,
+      "toss/shown": false
+    });
   }
 
-  renderBoard();
-  renderUI();
-
-  setTimeout(() => {
-    state.winnerAnimPlayer = null;
-    state.attackFlashTile = null;
-    renderBoard();
-  }, 700);
-}
-
-function startNextRound() {
-  if (state.phase !== 'roundOver') return;
-
-  hideWinnerPopup();
-  state.round += 1;
-  state.players[1].row = 0;
-  state.players[1].col = 0;
-  state.players[2].row = SIZE - 1;
-  state.players[2].col = SIZE - 1;
-  state.currentPlayer = state.round % 2 === 1 ? 1 : 2;
-  state.phase = 'roll';
-  state.dice = null;
-  state.movesRemaining = 0;
-  state.winner = null;
-  state.validMoves = [];
-  state.selectedTile = null;
-  state.lastMove = null;
-  state.winnerAnimPlayer = null;
-  state.blockedAnimPlayer = null;
-  state.attackFlashTile = null;
-
-  generateRandomBlockedTiles(18);
-  addLog(`Round ${state.round} started. ${getPlayerLabel(state.currentPlayer)} goes first.`);
-
-  renderBoard();
-  renderUI();
-
-  if (isBotTurn()) {
-    botTakeTurn();
-  }
-}
-
-function resetMatch() {
-  hideWinnerPopup();
-  state.players[1] = { row: 0, col: 0, score: 0 };
-  state.players[2] = { row: SIZE - 1, col: SIZE - 1, score: 0 };
-  state.currentPlayer = 1;
-  state.phase = 'roll';
-  state.dice = null;
-  state.movesRemaining = 0;
-  state.round = 1;
-  state.winner = null;
-  state.validMoves = [];
-  state.selectedTile = null;
-  state.log = [];
-  state.lastMove = null;
-  state.winnerAnimPlayer = null;
-  state.blockedAnimPlayer = null;
-  state.attackFlashTile = null;
-
-  generateRandomBlockedTiles(18);
-
-  document.querySelector('#winnerPopup .popup-title').textContent = 'Round Winner';
-  document.querySelector('#winnerPopup .popup-subtext').textContent = 'Start the next round when you are ready.';
-  nextRoundPopupBtn.textContent = 'Next Game';
-
-  addLog('New match started. Player 1 goes first.');
-  renderBoard();
-  renderUI();
-
-  if (isBotTurn()) {
-    botTakeTurn();
-  }
-}
-
-function showDicePop(value) {
-  const bubble = document.getElementById('dicePopBubble');
-  if (!bubble) return;
-
-  bubble.textContent = value;
-  bubble.classList.remove('show');
-  void bubble.offsetWidth;
-  bubble.classList.add('show');
-
-  setTimeout(() => {
-    bubble.classList.remove('show');
-  }, 900);
-}
-
-function showWinBubble(player) {
-  const bubble = document.getElementById('winBubble');
-  if (!bubble) return;
-
-  bubble.textContent = `${player === BOT_PLAYER ? 'Bot' : `Player ${player}`} Win!`;
-  bubble.style.transform = 'translate(-50%, -50%) scale(1)';
-
-  setTimeout(() => {
-    bubble.style.transform = 'translate(-50%, -50%) scale(0)';
-  }, 1500);
-}
-
-function tryKeyboardMove(dr, dc) {
-  if (state.phase !== 'move') return;
-  if (isBotTurn()) return;
-  if (state.currentPlayer !== 1) return;
-  if (state.movesRemaining <= 0) return;
-
-  const current = state.players[1];
-  const nextRow = current.row + dr;
-  const nextCol = current.col + dc;
-
-  if (!inBounds(nextRow, nextCol)) return;
-  onTileClick(nextRow, nextCol);
+  window.location.href = "/multiplayer.html";
 }
 
 function openDrawer() {
-  if (!sideDrawer || !drawerOverlay) return;
-  sideDrawer.classList.add('open');
-  drawerOverlay.classList.add('show');
+  sideDrawer?.classList.add('open');
+  drawerOverlay?.classList.add('show');
 }
 
 function closeDrawerMenu() {
-  if (!sideDrawer || !drawerOverlay) return;
-  sideDrawer.classList.remove('open');
-  drawerOverlay.classList.remove('show');
+  sideDrawer?.classList.remove('open');
+  drawerOverlay?.classList.remove('show');
 }
 
-rollBtn.addEventListener('click', () => {
-  if (state.phase !== 'roll' || isBotTurn()) return;
-  animateRollButton(() => {
-    rollDice();
+async function initMultiplayer() {
+  const snap = await get(ref(db, `rooms/${roomId}`));
+  if (!snap.exists()) {
+    localStorage.removeItem("roomId");
+    localStorage.removeItem("playerRole");
+    localStorage.removeItem("playerName");
+    return;
+  }
+
+  onValue(ref(db, `rooms/${roomId}`), (snapshot) => {
+    const room = snapshot.val();
+    if (!room) return;
+    syncRoomIntoLocal(room);
   });
-});
+}
 
-endTurnBtn.addEventListener('click', endTurnEarly);
-newRoundBtn.addEventListener('click', startNextRound);
+function initSoloFallback() {
+  blockedTiles.length = 0;
+  generateRandomBlockedTiles(18);
+  renderBoard();
+  renderUI();
+}
 
-nextRoundPopupBtn.addEventListener('click', () => {
-  hideWinnerPopup();
-  if (state.phase === 'matchOver') {
-    resetMatch();
-  } else {
-    startNextRound();
+rollBtn?.addEventListener("click", () => {
+  if (!rollBtn.disabled) {
+    animateRollButton(rollDiceAction);
   }
 });
 
-resetMatchBtn.addEventListener('click', () => {
+endTurnBtn?.addEventListener("click", endTurnEarly);
+newRoundBtn?.addEventListener("click", startNextRound);
+resetMatchBtn?.addEventListener("click", () => window.location.reload());
+leaveRoomBtn?.addEventListener("click", leaveRoom);
+
+nextRoundPopupBtn?.addEventListener("click", () => {
   hideWinnerPopup();
-  resetMatch();
+  startNextRound();
 });
 
-document.addEventListener('keydown', (e) => {
-  if (state.phase !== 'move') return;
-  if (isBotTurn()) return;
+document.addEventListener("keydown", (e) => {
+  if (!isMyTurn()) return;
+  if (state.phase !== "move") return;
 
-  const activeTag = document.activeElement?.tagName;
-  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
+  const keyMap = {
+    ArrowUp: [-1, 0],
+    ArrowDown: [1, 0],
+    ArrowLeft: [0, -1],
+    ArrowRight: [0, 1],
+    w: [-1, 0],
+    s: [1, 0],
+    a: [0, -1],
+    d: [0, 1],
+    W: [-1, 0],
+    S: [1, 0],
+    A: [0, -1],
+    D: [0, 1]
+  };
 
-  switch (e.key) {
-    case 'ArrowUp':
-    case 'w':
-    case 'W':
-      e.preventDefault();
-      tryKeyboardMove(-1, 0);
-      break;
-    case 'ArrowDown':
-    case 's':
-    case 'S':
-      e.preventDefault();
-      tryKeyboardMove(1, 0);
-      break;
-    case 'ArrowLeft':
-    case 'a':
-    case 'A':
-      e.preventDefault();
-      tryKeyboardMove(0, -1);
-      break;
-    case 'ArrowRight':
-    case 'd':
-    case 'D':
-      e.preventDefault();
-      tryKeyboardMove(0, 1);
-      break;
-  }
+  if (!(e.key in keyMap)) return;
+  e.preventDefault();
+
+  const [dr, dc] = keyMap[e.key];
+  const me = localRoleToNumber();
+  const nextRow = state.players[me].row + dr;
+  const nextCol = state.players[me].col + dc;
+  onTileClick(nextRow, nextCol);
 });
 
-if (menuToggle) {
-  menuToggle.addEventListener('click', openDrawer);
-}
+menuToggle?.addEventListener("click", openDrawer);
+menuToggleInline?.addEventListener("click", openDrawer);
+closeDrawer?.addEventListener("click", closeDrawerMenu);
+drawerOverlay?.addEventListener("click", closeDrawerMenu);
 
-if (closeDrawer) {
-  closeDrawer.addEventListener('click', closeDrawerMenu);
+if (isMultiplayer) {
+  initMultiplayer();
+} else {
+  initSoloFallback();
 }
-
-if (drawerOverlay) {
-  drawerOverlay.addEventListener('click', closeDrawerMenu);
-}
-
-resetMatch();
