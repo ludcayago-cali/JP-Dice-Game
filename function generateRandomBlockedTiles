@@ -189,7 +189,7 @@ function hasPathBetween(start, target) {
   return false;
 }
 
-function generateRandomBlockedTiles(count = 12) {
+function generateRandomBlockedTiles(count = 20) {
   const start1 = { row: 0, col: 0 };
   const start2 = { row: SIZE - 1, col: SIZE - 1 };
   const forbidden = new Set([
@@ -204,15 +204,21 @@ function generateRandomBlockedTiles(count = 12) {
     blockedTiles.length = 0;
 
     while (blockedTiles.length < count) {
-      const base = blockedTiles.length > 0
-        ? blockedTiles[Math.floor(Math.random() * blockedTiles.length)]
-        : {
-            row: Math.floor(Math.random() * SIZE),
-            col: Math.floor(Math.random() * SIZE)
-          };
+      let row, col;
 
-      const row = base.row + Math.floor(Math.random() * 3) - 1;
-      const col = base.col + Math.floor(Math.random() * 3) - 1;
+      const shouldCluster =
+        blockedTiles.length > 0 &&
+        Math.random() < 0.25; // ↓ reduced from 0.35 → better for 20 tiles
+
+      if (shouldCluster) {
+        const base = blockedTiles[Math.floor(Math.random() * blockedTiles.length)];
+        row = base.row + Math.floor(Math.random() * 3) - 1;
+        col = base.col + Math.floor(Math.random() * 3) - 1;
+      } else {
+        row = Math.floor(Math.random() * SIZE);
+        col = Math.floor(Math.random() * SIZE);
+      }
+
       const key = `${row},${col}`;
 
       if (!inBounds(row, col)) continue;
