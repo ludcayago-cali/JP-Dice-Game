@@ -189,7 +189,7 @@ function hasPathBetween(start, target) {
   return false;
 }
 
-function generateRandomBlockedTiles(count = 20) {
+function generateRandomBlockedTiles(count = 18) {
   const start1 = { row: 0, col: 0 };
   const start2 = { row: SIZE - 1, col: SIZE - 1 };
   const forbidden = new Set([
@@ -197,10 +197,9 @@ function generateRandomBlockedTiles(count = 20) {
     `${SIZE - 1},${SIZE - 1}`
   ]);
 
-  let attempts = 0;
+  let success = false;
 
-  do {
-    attempts += 1;
+  for (let attempts = 0; attempts < 500; attempts++) {
     blockedTiles.length = 0;
 
     while (blockedTiles.length < count) {
@@ -208,7 +207,7 @@ function generateRandomBlockedTiles(count = 20) {
 
       const shouldCluster =
         blockedTiles.length > 0 &&
-        Math.random() < 0.25; // ↓ reduced from 0.35 → better for 20 tiles
+        Math.random() < 0.25;
 
       if (shouldCluster) {
         const base = blockedTiles[Math.floor(Math.random() * blockedTiles.length)];
@@ -223,17 +222,31 @@ function generateRandomBlockedTiles(count = 20) {
 
       if (!inBounds(row, col)) continue;
       if (forbidden.has(key)) continue;
-      if (blockedTiles.some(tile => tile.row === row && tile.col === col)) continue;
+      if (blockedTiles.some(t => t.row === row && t.col === col)) continue;
 
       blockedTiles.push({ row, col });
     }
 
     if (hasPathBetween(start1, start2)) {
-      return;
+      success = true;
+      break;
     }
-  } while (attempts < 200);
+  }
 
-  blockedTiles.length = 0;
+  if (!success) {
+    blockedTiles.length = 0;
+
+    while (blockedTiles.length < count) {
+      const row = Math.floor(Math.random() * SIZE);
+      const col = Math.floor(Math.random() * SIZE);
+      const key = `${row},${col}`;
+
+      if (forbidden.has(key)) continue;
+      if (blockedTiles.some(t => t.row === row && t.col === col)) continue;
+
+      blockedTiles.push({ row, col });
+    }
+  }
 }
 
 function coordLabel(pos) {
