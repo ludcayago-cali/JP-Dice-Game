@@ -688,7 +688,7 @@ function startNextRound() {
   state.blockedAnimPlayer = null;
   state.attackFlashTile = null;
 
-  generateRandomBlockedTiles(12);
+  generateRandomBlockedTiles(18);
   addLog(`Round ${state.round} started. ${getPlayerLabel(state.currentPlayer)} goes first.`);
 
   renderBoard();
@@ -717,7 +717,7 @@ function resetMatch() {
   state.blockedAnimPlayer = null;
   state.attackFlashTile = null;
 
-  generateRandomBlockedTiles(12);
+  generateRandomBlockedTiles(18);
 
   document.querySelector('#winnerPopup .popup-title').textContent = 'Round Winner';
   document.querySelector('#winnerPopup .popup-subtext').textContent = 'Start the next round when you are ready.';
