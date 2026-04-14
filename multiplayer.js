@@ -12,26 +12,21 @@ const roomCodeDisplay = document.getElementById("roomCodeDisplay");
 const createRoomBtn = document.getElementById("createRoomBtn");
 const joinRoomBtn = document.getElementById("joinRoomBtn");
 const cancelRoomBtn = document.getElementById("cancelRoomBtn");
-const leaveRoomBtn = document.getElementById("leaveRoomBtn");
-
-const p1NameEl = document.getElementById("p1Name");
-const p2NameEl = document.getElementById("p2Name");
-const roomStatusText = document.getElementById("roomStatusText");
 
 let playerName = "";
 let roomId = null;
 let playerRole = null;
-let roomUnsubscribeActive = false;
+let roomListenerAttached = false;
 
 function showScreen(screen) {
-  lobbyScreen.classList.add("hidden");
-  waitingScreen.classList.add("hidden");
-  gameScreen.classList.add("hidden");
-  screen.classList.remove("hidden");
+  lobbyScreen?.classList.add("hidden");
+  waitingScreen?.classList.add("hidden");
+  gameScreen?.classList.add("hidden");
+  screen?.classList.remove("hidden");
 }
 
 function showMessage(msg) {
-  lobbyMessage.textContent = msg || "";
+  if (lobbyMessage) lobbyMessage.textContent = msg || "";
 }
 
 function getName() {
@@ -54,23 +49,39 @@ async function createRoom() {
 
   await set(roomRef, {
     status: "waiting",
-    turn: "p1",
-    phase: "roll",
+    turn: null,
+    phase: "waiting",
     round: 1,
     dice: null,
     movesRemaining: 0,
     blockedTiles: [],
-    players: {
-      p1: { name: playerName, row: 0, col: 0, connected: true },
-      p2: { name: "", row: 7, col: 7, connected: false }
-    },
     winner: null,
+    toss: {
+      shown: false,
+      result: null
+    },
+    players: {
+      p1: {
+        name: playerName,
+        row: 0,
+        col: 0,
+        connected: true
+      },
+      p2: {
+        name: "",
+        row: 7,
+        col: 7,
+        connected: false
+      }
+    },
     createdAt: Date.now()
   });
 
-  roomCodeDisplay.textContent = roomId;
-  showScreen(waitingScreen);
-  listenRoom(roomId);
+  localStorage.setItem("roomId", roomId);
+  localStorage.setItem("playerRole", playerRole);
+  localStorage.setItem("playerName", playerName);
+
+  window.location.href = "/";
 }
 
 async function joinRoom(code) {
@@ -91,6 +102,7 @@ async function joinRoom(code) {
 
   await update(ref(db, `rooms/${roomId}`), {
     status: "playing",
+    phase: "toss",
     "players/p2": {
       name: playerName,
       row: 7,
@@ -99,49 +111,11 @@ async function joinRoom(code) {
     }
   });
 
-  listenRoom(roomId);
-}
+  localStorage.setItem("roomId", roomId);
+  localStorage.setItem("playerRole", playerRole);
+  localStorage.setItem("playerName", playerName);
 
-function listenRoom(id) {
-  if (roomUnsubscribeActive) return;
-  roomUnsubscribeActive = true;
-
-  onValue(ref(db, `rooms/${id}`), (snap) => {
-    const room = snap.val();
-
-    if (!room) {
-      showScreen(lobbyScreen);
-      showMessage("Room closed.");
-      roomId = null;
-      playerRole = null;
-      roomUnsubscribeActive = false;
-      return;
-    }
-
-    roomStatusText.textContent = `Room: ${id}`;
-    p1NameEl.textContent = room.players?.p1?.name || "Player 1";
-    p2NameEl.textContent = room.players?.p2?.name || "Player 2";
-
-    if (room.status === "waiting") {
-      roomCodeDisplay.textContent = id;
-      showScreen(waitingScreen);
-      return;
-    }
-
-    if (room.status === "playing") {
-      showScreen(gameScreen);
-    }
-  });
-}
-
-async function cancelOrLeaveRoom() {
-  if (!roomId) return;
-  await remove(ref(db, `rooms/${roomId}`));
-  roomId = null;
-  playerRole = null;
-  roomUnsubscribeActive = false;
-  showScreen(lobbyScreen);
-  showMessage("");
+  window.location.href = "/";
 }
 
 createRoomBtn?.addEventListener("click", async () => {
@@ -167,5 +141,12 @@ joinRoomBtn?.addEventListener("click", async () => {
   await joinRoom(code);
 });
 
-cancelRoomBtn?.addEventListener("click", cancelOrLeaveRoom);
-leaveRoomBtn?.addEventListener("click", cancelOrLeaveRoom);
+cancelRoomBtn?.addEventListener("click", async () => {
+  if (!roomId) return;
+  await remove(ref(db, `rooms/${roomId}`));
+  localStorage.removeItem("roomId");
+  localStorage.removeItem("playerRole");
+  localStorage.removeItem("playerName");
+  showScreen(lobbyScreen);
+  showMessage("");
+});
