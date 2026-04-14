@@ -444,7 +444,7 @@ function renderBoard() {
         const blocked = state.blockedAnimPlayer === 1;
 
         piece.className = `piece p1 ${moved ? 'move' : ''} ${won ? 'win' : ''} ${blocked ? 'blocked' : ''}`.trim();
-        piece.innerHTML = `<img src="./assets/blue-removebg-preview.png" draggable="false" alt="Player 1">`;
+        piece.innerHTML = `<img src="./blue-removebg-preview.png" draggable="false" alt="Player 1">`;
         tile.appendChild(piece);
       }
 
@@ -459,7 +459,7 @@ function renderBoard() {
         const blocked = state.blockedAnimPlayer === 2;
 
         piece.className = `piece p2 ${moved ? 'move' : ''} ${won ? 'win' : ''} ${blocked ? 'blocked' : ''}`.trim();
-        piece.innerHTML = `<img src="./assets/red-removebg-preview.png" draggable="false" alt="Bot">`;
+        piece.innerHTML = `<img src="./red-removebg-preview.png" draggable="false" alt="Bot">`;
         tile.appendChild(piece);
       }
 
