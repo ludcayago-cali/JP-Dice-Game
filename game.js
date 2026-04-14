@@ -1,6 +1,7 @@
 import { db, ref, update, get, onValue, remove } from "./firebase.js";
 
 const SIZE = 8;
+const TILE_SIZE = 72;
 const WIN_ROUNDS = 2;
 const blockedTiles = [];
 
@@ -9,11 +10,32 @@ const playerRole = localStorage.getItem("playerRole");
 const playerName = localStorage.getItem("playerName") || "";
 const isMultiplayer = !!roomId && !!playerRole;
 
-const ISO_TILE_W = 128;
-const ISO_TILE_H = 72;
-
 let roomState = null;
 let tossShownLocally = false;
+
+const TILESET = {
+  ground: {
+    floor1: "/assets/tile-floor1.png",
+    floor2: "/assets/tile-floor2.png",
+    grass1: "/assets/tile-grass1.png",
+    grass2: "/assets/tile-grass2.png",
+  },
+  block: {
+    stone: "/assets/d-tile1.png",
+    sand: "/assets/d-tile2.png",
+    bonfire: "/assets/d-tile3.png",
+  },
+  actor: {
+    p1: "/assets/blue-removebg-preview.png",
+    p2: "/assets/red-removebg-preview.png",
+  },
+};
+
+const tileMap = {
+  ground: [],
+  block: [],
+  prop: [],
+};
 
 const state = {
   players: {
@@ -71,8 +93,6 @@ const closeDrawer = document.getElementById("closeDrawer");
 const sideDrawer = document.getElementById("sideDrawer");
 const drawerOverlay = document.getElementById("drawerOverlay");
 
-/* ------------------------- helpers ------------------------- */
-
 function addLog(message) {
   state.log.unshift(message);
   state.log = state.log.slice(0, 20);
@@ -97,6 +117,7 @@ function showCoinTossPopup(text) {
 
 function showResultPopup(message, isMatchOver = false) {
   if (!resultPopup || !resultPopupText) return;
+
   resultPopupText.textContent = message;
 
   if (resultPopupSubtext) {
@@ -126,7 +147,7 @@ function animateRollButton(callback) {
   setTimeout(() => {
     rollBtn.classList.remove("rolling");
     callback();
-  }, 700);
+  }, 500);
 }
 
 function openDrawer() {
@@ -137,6 +158,20 @@ function openDrawer() {
 function closeDrawerMenu() {
   sideDrawer?.classList.remove("open");
   drawerOverlay?.classList.remove("show");
+}
+
+function createEmptyLayer(fill = null) {
+  return Array.from({ length: SIZE }, () =>
+    Array.from({ length: SIZE }, () => fill)
+  );
+}
+
+function rand(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function cellHash(row, col) {
+  return (row * 37 + col * 91 + row * col * 17) % 1000;
 }
 
 function getOpponent(player) {
@@ -174,35 +209,67 @@ function isWallTile(row, col) {
   return blockedTiles.some((b) => b.row === row && b.col === col);
 }
 
-function cellHash(row, col) {
-  return (row * 37 + col * 91 + row * col * 17) % 1000;
-}
+function groundKeyForCell(row, col) {
+  const seed = cellHash(row, col) % 100;
 
-function terrainClassForCell(row, col) {
-  const seed = cellHash(row, col);
-  const family = row < SIZE / 2 ? "green" : "yellow";
-
-  if (family === "green") {
-    return seed % 4 === 0 ? "green-2" : "green-1";
+  if (row < SIZE / 2) {
+    if (seed < 60) return "grass1";
+    if (seed < 95) return "grass2";
+    return "floor2";
   }
 
-  return seed % 4 === 0 ? "yellow-2" : "yellow-1";
+  if (seed < 60) return "floor1";
+  if (seed < 90) return "floor2";
+  return "grass1";
 }
 
-function blockedClassForCell(row, col) {
+function blockKeyForCell(row, col) {
   const seed = cellHash(row, col) % 3;
-  if (seed === 0) return "bonfire";
-  if (seed === 1) return "stone";
-  return "sand";
+  if (seed === 0) return "stone";
+  if (seed === 1) return "sand";
+  return "bonfire";
 }
 
-function isoPosition(row, col) {
-  const left = (SIZE - 1) * (ISO_TILE_W / 2) + (col - row) * (ISO_TILE_W / 2);
-  const top = (row + col) * (ISO_TILE_H / 2);
-  return { left, top };
+function generateGroundLayer() {
+  const ground = createEmptyLayer();
+
+  for (let row = 0; row < SIZE; row++) {
+    for (let col = 0; col < SIZE; col++) {
+      const left = col > 0 ? ground[row][col - 1] : null;
+      const top = row > 0 ? ground[row - 1][col] : null;
+
+      const preferred = [];
+      const family = row < SIZE / 2 ? ["grass1", "grass2"] : ["floor1", "floor2"];
+
+      if (left && family.includes(left) && Math.random() < 0.62) preferred.push(left);
+      if (top && family.includes(top) && Math.random() < 0.55) preferred.push(top);
+
+      if (preferred.length > 0 && Math.random() < 0.75) {
+        ground[row][col] = rand(preferred);
+      } else {
+        ground[row][col] = groundKeyForCell(row, col);
+      }
+    }
+  }
+
+  return ground;
 }
 
-/* ------------------------- game logic ------------------------- */
+function generateBlockLayerFromBlockedTiles() {
+  const block = createEmptyLayer();
+
+  for (const tile of blockedTiles) {
+    block[tile.row][tile.col] = blockKeyForCell(tile.row, tile.col);
+  }
+
+  return block;
+}
+
+function buildVisualMap() {
+  tileMap.ground = generateGroundLayer();
+  tileMap.block = generateBlockLayerFromBlockedTiles();
+  tileMap.prop = createEmptyLayer();
+}
 
 function getReachableTiles(player) {
   const start = state.players[player];
@@ -299,7 +366,7 @@ function generateRandomBlockedTiles(count = 18) {
       let row;
       let col;
 
-      const shouldCluster = blockedTiles.length > 0 && Math.random() < 0.25;
+      const shouldCluster = blockedTiles.length > 0 && Math.random() < 0.22;
 
       if (shouldCluster) {
         const base = blockedTiles[Math.floor(Math.random() * blockedTiles.length)];
@@ -342,52 +409,64 @@ function generateRandomBlockedTiles(count = 18) {
   return blockedTiles.map((t) => ({ row: t.row, col: t.col }));
 }
 
-/* ------------------------- rendering ------------------------- */
-
-function renderBoard() {
+function renderTileEngine() {
   if (!boardEl) return;
 
   boardEl.innerHTML = "";
-
-  const boardWidth = SIZE * ISO_TILE_W;
-  const boardHeight = SIZE * ISO_TILE_H + 180;
-
-  boardEl.style.width = `${boardWidth}px`;
-  boardEl.style.height = `${boardHeight}px`;
+  boardEl.style.width = `${SIZE * TILE_SIZE}px`;
+  boardEl.style.height = `${SIZE * TILE_SIZE}px`;
 
   for (let row = 0; row < SIZE; row++) {
     for (let col = 0; col < SIZE; col++) {
-      const tile = document.createElement("button");
-      tile.className = "tile";
+      const cell = document.createElement("button");
+      cell.className = "cell";
+      cell.style.left = `${col * TILE_SIZE}px`;
+      cell.style.top = `${row * TILE_SIZE}px`;
+      cell.dataset.row = String(row);
+      cell.dataset.col = String(col);
 
-      const { left, top } = isoPosition(row, col);
-      tile.style.left = `${left}px`;
-      tile.style.top = `${top}px`;
-      tile.style.zIndex = String(row + col + 1);
-
-      const wall = isWallTile(row, col);
-
-      if (wall) {
-        tile.classList.add("blocked", blockedClassForCell(row, col));
-      } else {
-        tile.classList.add(terrainClassForCell(row, col));
+      const groundKey = tileMap.ground[row]?.[col];
+      if (groundKey) {
+        const ground = document.createElement("div");
+        ground.className = "layer ground";
+        ground.style.backgroundImage = `url("${TILESET.ground[groundKey]}")`;
+        cell.appendChild(ground);
       }
 
-      const valid = state.validMoves.some((m) => m.row === row && m.col === col);
-      const selected =
-        state.selectedTile &&
-        state.selectedTile.row === row &&
-        state.selectedTile.col === col;
-
-      if (valid) tile.classList.add("valid");
-      if (selected) tile.classList.add("selected");
+      const blockKey = tileMap.block[row]?.[col];
+      if (blockKey) {
+        const block = document.createElement("div");
+        block.className = "layer block";
+        block.style.backgroundImage = `url("${TILESET.block[blockKey]}")`;
+        cell.appendChild(block);
+      }
 
       if (
         state.attackFlashTile &&
         state.attackFlashTile.row === row &&
         state.attackFlashTile.col === col
       ) {
-        tile.classList.add("attack-flash");
+        const fxAttack = document.createElement("div");
+        fxAttack.className = "layer fx attack";
+        cell.appendChild(fxAttack);
+      }
+
+      const valid = state.validMoves.some((m) => m.row === row && m.col === col);
+      if (valid) {
+        const fx = document.createElement("div");
+        fx.className = "layer fx valid";
+        cell.appendChild(fx);
+      }
+
+      const selected =
+        state.selectedTile &&
+        state.selectedTile.row === row &&
+        state.selectedTile.col === col;
+
+      if (selected) {
+        const fxSelected = document.createElement("div");
+        fxSelected.className = "layer fx selected";
+        cell.appendChild(fxSelected);
       }
 
       if (
@@ -395,19 +474,10 @@ function renderBoard() {
         state.players[1].row === row &&
         state.players[1].col === col
       ) {
-        const piece = document.createElement("div");
-        const moved =
-          state.lastMove &&
-          state.lastMove.player === 1 &&
-          state.lastMove.row === row &&
-          state.lastMove.col === col;
-        const won = state.winnerAnimPlayer === 1;
-        const blocked = state.blockedAnimPlayer === 1;
-
-        piece.className = `piece p1 ${moved ? "move" : ""} ${won ? "win" : ""} ${blocked ? "blocked" : ""}`.trim();
-        piece.style.zIndex = String(100 + row + col);
-        piece.innerHTML = `<img src="/assets/blue-removebg-preview.png" draggable="false" alt="Player 1">`;
-        tile.appendChild(piece);
+        const actor = document.createElement("div");
+        actor.className = `layer actor p1 ${state.lastMove?.player === 1 && state.lastMove?.row === row && state.lastMove?.col === col ? "move" : ""}`.trim();
+        actor.style.backgroundImage = `url("${TILESET.actor.p1}")`;
+        cell.appendChild(actor);
       }
 
       if (
@@ -415,23 +485,14 @@ function renderBoard() {
         state.players[2].row === row &&
         state.players[2].col === col
       ) {
-        const piece = document.createElement("div");
-        const moved =
-          state.lastMove &&
-          state.lastMove.player === 2 &&
-          state.lastMove.row === row &&
-          state.lastMove.col === col;
-        const won = state.winnerAnimPlayer === 2;
-        const blocked = state.blockedAnimPlayer === 2;
-
-        piece.className = `piece p2 ${moved ? "move" : ""} ${won ? "win" : ""} ${blocked ? "blocked" : ""}`.trim();
-        piece.style.zIndex = String(100 + row + col);
-        piece.innerHTML = `<img src="/assets/red-removebg-preview.png" draggable="false" alt="Player 2">`;
-        tile.appendChild(piece);
+        const actor = document.createElement("div");
+        actor.className = `layer actor p2 ${state.lastMove?.player === 2 && state.lastMove?.row === row && state.lastMove?.col === col ? "move" : ""}`.trim();
+        actor.style.backgroundImage = `url("${TILESET.actor.p2}")`;
+        cell.appendChild(actor);
       }
 
-      tile.addEventListener("click", () => onTileClick(row, col));
-      boardEl.appendChild(tile);
+      cell.addEventListener("click", () => onTileClick(row, col));
+      boardEl.appendChild(cell);
     }
   }
 }
@@ -495,8 +556,6 @@ function renderUI() {
   }
 }
 
-/* ------------------------- multiplayer sync ------------------------- */
-
 function syncRoomIntoLocal(room) {
   roomState = room;
 
@@ -530,7 +589,8 @@ function syncRoomIntoLocal(room) {
     state.validMoves = [];
   }
 
-  renderBoard();
+  buildVisualMap();
+  renderTileEngine();
   renderUI();
 
   if (room.phase === "roundOver" && room.winner) {
@@ -584,8 +644,6 @@ async function writeRoomPatch(patch) {
   await update(ref(db, `rooms/${roomId}`), patch);
 }
 
-/* ------------------------- actions ------------------------- */
-
 async function onTileClick(row, col) {
   if (state.phase !== "move") return;
   if (!isMyTurn()) return;
@@ -614,7 +672,6 @@ async function onTileClick(row, col) {
 
   tempPlayers[me].row = row;
   tempPlayers[me].col = col;
-
   state.lastMove = { player: me, row, col };
 
   if (state.players[opponent].connected && !hasEscapeForPatch(opponent, tempPlayers)) {
@@ -755,8 +812,6 @@ async function leaveRoom() {
   window.location.href = "/multiplayer.html";
 }
 
-/* ------------------------- init ------------------------- */
-
 async function initMultiplayer() {
   const snap = await get(ref(db, `rooms/${roomId}`));
   if (!snap.exists()) {
@@ -776,11 +831,10 @@ async function initMultiplayer() {
 function initSoloFallback() {
   blockedTiles.length = 0;
   generateRandomBlockedTiles(18);
-  renderBoard();
+  buildVisualMap();
+  renderTileEngine();
   renderUI();
 }
-
-/* ------------------------- events ------------------------- */
 
 rollBtn?.addEventListener("click", () => {
   if (!rollBtn.disabled) {
@@ -841,8 +895,6 @@ menuToggle?.addEventListener("click", openDrawer);
 menuToggleInline?.addEventListener("click", openDrawer);
 closeDrawer?.addEventListener("click", closeDrawerMenu);
 drawerOverlay?.addEventListener("click", closeDrawerMenu);
-
-/* ------------------------- boot ------------------------- */
 
 if (isMultiplayer) {
   initMultiplayer();
