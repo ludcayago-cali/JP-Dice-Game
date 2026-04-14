@@ -31,6 +31,34 @@ const TILESET = {
   },
 };
 
+const MAP_01 = {
+  name: "Crossroads",
+  startP1: { row: 0, col: 0 },
+  startP2: { row: 7, col: 7 },
+
+  ground: [
+    ["grass1", "grass2", "grass1", "grass2", "grass1", "grass1", "grass2", "grass1"],
+    ["grass2", "grass1", "grass2", "grass1", "grass2", "grass1", "grass1", "grass2"],
+    ["grass1", "floor2", "grass1", "grass2", "grass1", "floor2", "grass1", "grass1"],
+    ["grass2", "grass1", "floor2", "grass1", "floor1", "grass2", "floor2", "grass1"],
+    ["floor1", "floor2", "floor1", "floor2", "floor1", "floor1", "floor2", "floor1"],
+    ["floor2", "floor1", "floor2", "floor1", "floor2", "floor1", "floor1", "floor2"],
+    ["floor1", "floor2", "floor1", "floor2", "floor1", "floor2", "floor1", "floor1"],
+    ["floor2", "floor1", "floor2", "floor1", "floor2", "floor1", "floor2", "floor1"],
+  ],
+
+  blocks: [
+    [null,      null,      null,      null,      null,      null,      null,      null],
+    [null,      null,      null,      null,      "sand",    null,      null,      null],
+    [null,      null,      "stone",   "bonfire", null,      null,      null,      null],
+    [null,      "stone",   null,      "stone",   "sand",    null,      "stone",   null],
+    [null,      null,      null,      "sand",    "sand",    "sand",    null,      "stone"],
+    ["bonfire", null,      "stone",   null,      "sand",    null,      null,      null],
+    [null,      null,      "bonfire", "stone",   null,      null,      "bonfire", null],
+    [null,      null,      "sand",    null,      null,      null,      null,      null],
+  ],
+};
+
 const tileMap = {
   ground: [],
   block: [],
@@ -93,6 +121,8 @@ const closeDrawer = document.getElementById("closeDrawer");
 const sideDrawer = document.getElementById("sideDrawer");
 const drawerOverlay = document.getElementById("drawerOverlay");
 
+/* ---------------- helpers ---------------- */
+
 function addLog(message) {
   state.log.unshift(message);
   state.log = state.log.slice(0, 20);
@@ -101,9 +131,7 @@ function addLog(message) {
 
 function renderLog() {
   if (!logEl) return;
-  logEl.innerHTML = state.log
-    .map((entry) => `<div class="log-entry">${entry}</div>`)
-    .join("");
+  logEl.innerHTML = state.log.map((entry) => `<div class="log-entry">${entry}</div>`).join("");
 }
 
 function showCoinTossPopup(text) {
@@ -170,10 +198,6 @@ function rand(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-function cellHash(row, col) {
-  return (row * 37 + col * 91 + row * col * 17) % 1000;
-}
-
 function getOpponent(player) {
   return player === 1 ? 2 : 1;
 }
@@ -209,67 +233,52 @@ function isWallTile(row, col) {
   return blockedTiles.some((b) => b.row === row && b.col === col);
 }
 
-function groundKeyForCell(row, col) {
-  const seed = cellHash(row, col) % 100;
+/* ---------------- map loading ---------------- */
 
-  if (row < SIZE / 2) {
-    if (seed < 60) return "grass1";
-    if (seed < 95) return "grass2";
-    return "floor2";
-  }
+function loadMap(map) {
+  tileMap.ground = map.ground.map((row) => [...row]);
+  tileMap.block = map.blocks.map((row) => [...row]);
+  tileMap.prop = createEmptyLayer();
 
-  if (seed < 60) return "floor1";
-  if (seed < 90) return "floor2";
-  return "grass1";
-}
-
-function blockKeyForCell(row, col) {
-  const seed = cellHash(row, col) % 3;
-  if (seed === 0) return "stone";
-  if (seed === 1) return "sand";
-  return "bonfire";
-}
-
-function generateGroundLayer() {
-  const ground = createEmptyLayer();
+  blockedTiles.length = 0;
 
   for (let row = 0; row < SIZE; row++) {
     for (let col = 0; col < SIZE; col++) {
-      const left = col > 0 ? ground[row][col - 1] : null;
-      const top = row > 0 ? ground[row - 1][col] : null;
-
-      const preferred = [];
-      const family = row < SIZE / 2 ? ["grass1", "grass2"] : ["floor1", "floor2"];
-
-      if (left && family.includes(left) && Math.random() < 0.62) preferred.push(left);
-      if (top && family.includes(top) && Math.random() < 0.55) preferred.push(top);
-
-      if (preferred.length > 0 && Math.random() < 0.75) {
-        ground[row][col] = rand(preferred);
-      } else {
-        ground[row][col] = groundKeyForCell(row, col);
+      if (map.blocks[row][col]) {
+        blockedTiles.push({ row, col });
       }
     }
   }
 
-  return ground;
-}
-
-function generateBlockLayerFromBlockedTiles() {
-  const block = createEmptyLayer();
-
-  for (const tile of blockedTiles) {
-    block[tile.row][tile.col] = blockKeyForCell(tile.row, tile.col);
-  }
-
-  return block;
+  state.players[1].row = map.startP1.row;
+  state.players[1].col = map.startP1.col;
+  state.players[2].row = map.startP2.row;
+  state.players[2].col = map.startP2.col;
 }
 
 function buildVisualMap() {
-  tileMap.ground = generateGroundLayer();
-  tileMap.block = generateBlockLayerFromBlockedTiles();
+  tileMap.ground = MAP_01.ground.map((row) => [...row]);
+  tileMap.block = createEmptyLayer();
   tileMap.prop = createEmptyLayer();
+
+  for (const tile of blockedTiles) {
+    tileMap.block[tile.row][tile.col] = MAP_01.blocks[tile.row][tile.col] || "stone";
+  }
 }
+
+function getMapBlockedTiles(map) {
+  const tiles = [];
+  for (let row = 0; row < SIZE; row++) {
+    for (let col = 0; col < SIZE; col++) {
+      if (map.blocks[row][col]) {
+        tiles.push({ row, col });
+      }
+    }
+  }
+  return tiles;
+}
+
+/* ---------------- game logic ---------------- */
 
 function getReachableTiles(player) {
   const start = state.players[player];
@@ -352,62 +361,7 @@ function hasEscapeForPatch(player, tempPlayers) {
   return false;
 }
 
-function generateRandomBlockedTiles(count = 18) {
-  const start1 = { row: 0, col: 0 };
-  const start2 = { row: SIZE - 1, col: SIZE - 1 };
-  const forbidden = new Set([`0,0`, `${SIZE - 1},${SIZE - 1}`]);
-
-  let success = false;
-
-  for (let attempts = 0; attempts < 500; attempts++) {
-    blockedTiles.length = 0;
-
-    while (blockedTiles.length < count) {
-      let row;
-      let col;
-
-      const shouldCluster = blockedTiles.length > 0 && Math.random() < 0.22;
-
-      if (shouldCluster) {
-        const base = blockedTiles[Math.floor(Math.random() * blockedTiles.length)];
-        row = base.row + Math.floor(Math.random() * 3) - 1;
-        col = base.col + Math.floor(Math.random() * 3) - 1;
-      } else {
-        row = Math.floor(Math.random() * SIZE);
-        col = Math.floor(Math.random() * SIZE);
-      }
-
-      const key = `${row},${col}`;
-
-      if (!inBounds(row, col)) continue;
-      if (forbidden.has(key)) continue;
-      if (blockedTiles.some((t) => t.row === row && t.col === col)) continue;
-
-      blockedTiles.push({ row, col });
-    }
-
-    if (hasPathBetween(start1, start2)) {
-      success = true;
-      break;
-    }
-  }
-
-  if (!success) {
-    blockedTiles.length = 0;
-    while (blockedTiles.length < count) {
-      const row = Math.floor(Math.random() * SIZE);
-      const col = Math.floor(Math.random() * SIZE);
-      const key = `${row},${col}`;
-
-      if (forbidden.has(key)) continue;
-      if (blockedTiles.some((t) => t.row === row && t.col === col)) continue;
-
-      blockedTiles.push({ row, col });
-    }
-  }
-
-  return blockedTiles.map((t) => ({ row: t.row, col: t.col }));
-}
+/* ---------------- rendering ---------------- */
 
 function renderTileEngine() {
   if (!boardEl) return;
@@ -475,7 +429,12 @@ function renderTileEngine() {
         state.players[1].col === col
       ) {
         const actor = document.createElement("div");
-        actor.className = `layer actor p1 ${state.lastMove?.player === 1 && state.lastMove?.row === row && state.lastMove?.col === col ? "move" : ""}`.trim();
+        const moved =
+          state.lastMove?.player === 1 &&
+          state.lastMove?.row === row &&
+          state.lastMove?.col === col;
+
+        actor.className = `layer actor p1 ${moved ? "move" : ""}`.trim();
         actor.style.backgroundImage = `url("${TILESET.actor.p1}")`;
         cell.appendChild(actor);
       }
@@ -486,7 +445,12 @@ function renderTileEngine() {
         state.players[2].col === col
       ) {
         const actor = document.createElement("div");
-        actor.className = `layer actor p2 ${state.lastMove?.player === 2 && state.lastMove?.row === row && state.lastMove?.col === col ? "move" : ""}`.trim();
+        const moved =
+          state.lastMove?.player === 2 &&
+          state.lastMove?.row === row &&
+          state.lastMove?.col === col;
+
+        actor.className = `layer actor p2 ${moved ? "move" : ""}`.trim();
         actor.style.backgroundImage = `url("${TILESET.actor.p2}")`;
         cell.appendChild(actor);
       }
@@ -528,10 +492,12 @@ function renderUI() {
     phaseMsg = "Match complete.";
   }
 
-  phaseText.textContent = phaseMsg;
-  diceText.textContent =
-    state.dice == null ? "Dice: -" : `Dice: ${state.dice} | Moves left: ${state.movesRemaining}`;
-  roundText.textContent = `Round ${state.round} of 3`;
+  if (phaseText) phaseText.textContent = phaseMsg;
+  if (diceText) {
+    diceText.textContent =
+      state.dice == null ? "Dice: -" : `Dice: ${state.dice} | Moves left: ${state.movesRemaining}`;
+  }
+  if (roundText) roundText.textContent = `Round ${state.round} of 3`;
 
   if (roomStatusText) {
     roomStatusText.textContent = roomId ? `Room: ${roomId}` : "Room: -";
@@ -555,6 +521,8 @@ function renderUI() {
     newRoundBtn.disabled = state.phase !== "roundOver" || (isMultiplayer && !isMyTurn());
   }
 }
+
+/* ---------------- multiplayer sync ---------------- */
 
 function syncRoomIntoLocal(room) {
   roomState = room;
@@ -623,7 +591,7 @@ async function maybeRunToss(room) {
   if (room.toss?.result) return;
 
   const starter = Math.random() < 0.5 ? "p1" : "p2";
-  const tiles = generateRandomBlockedTiles(18);
+  const tiles = getMapBlockedTiles(MAP_01);
 
   await update(ref(db, `rooms/${roomId}`), {
     status: "playing",
@@ -632,6 +600,10 @@ async function maybeRunToss(room) {
     dice: null,
     movesRemaining: 0,
     blockedTiles: tiles,
+    "players/p1/row": MAP_01.startP1.row,
+    "players/p1/col": MAP_01.startP1.col,
+    "players/p2/row": MAP_01.startP2.row,
+    "players/p2/col": MAP_01.startP2.col,
     "toss/result": starter,
     "toss/shown": true,
     "scores/p1": room.scores?.p1 ?? 0,
@@ -643,6 +615,8 @@ async function writeRoomPatch(patch) {
   if (!isMultiplayer || !roomId) return;
   await update(ref(db, `rooms/${roomId}`), patch);
 }
+
+/* ---------------- actions ---------------- */
 
 async function onTileClick(row, col) {
   if (state.phase !== "move") return;
@@ -673,6 +647,7 @@ async function onTileClick(row, col) {
   tempPlayers[me].row = row;
   tempPlayers[me].col = col;
   state.lastMove = { player: me, row, col };
+  state.selectedTile = { row, col };
 
   if (state.players[opponent].connected && !hasEscapeForPatch(opponent, tempPlayers)) {
     const scoreKey = me === 1 ? "scores/p1" : "scores/p2";
@@ -739,7 +714,7 @@ async function startNextRound() {
   hideResultPopup();
 
   const starter = roomState.round % 2 === 1 ? "p2" : "p1";
-  const tiles = generateRandomBlockedTiles(18);
+  const tiles = getMapBlockedTiles(MAP_01);
 
   await writeRoomPatch({
     round: (roomState.round || 1) + 1,
@@ -749,10 +724,10 @@ async function startNextRound() {
     movesRemaining: 0,
     winner: null,
     blockedTiles: tiles,
-    "players/p1/row": 0,
-    "players/p1/col": 0,
-    "players/p2/row": 7,
-    "players/p2/col": 7,
+    "players/p1/row": MAP_01.startP1.row,
+    "players/p1/col": MAP_01.startP1.col,
+    "players/p2/row": MAP_01.startP2.row,
+    "players/p2/col": MAP_01.startP2.col,
   });
 }
 
@@ -773,10 +748,10 @@ async function resetSeries() {
     blockedTiles: [],
     "scores/p1": 0,
     "scores/p2": 0,
-    "players/p1/row": 0,
-    "players/p1/col": 0,
-    "players/p2/row": 7,
-    "players/p2/col": 7,
+    "players/p1/row": MAP_01.startP1.row,
+    "players/p1/col": MAP_01.startP1.col,
+    "players/p2/row": MAP_01.startP2.row,
+    "players/p2/col": MAP_01.startP2.col,
     "toss/result": null,
     "toss/shown": false,
   });
@@ -800,8 +775,8 @@ async function leaveRoom() {
       turn: null,
       "players/p2": {
         name: "",
-        row: 7,
-        col: 7,
+        row: MAP_01.startP2.row,
+        col: MAP_01.startP2.col,
         connected: false,
       },
       "toss/result": null,
@@ -811,6 +786,8 @@ async function leaveRoom() {
 
   window.location.href = "/multiplayer.html";
 }
+
+/* ---------------- init ---------------- */
 
 async function initMultiplayer() {
   const snap = await get(ref(db, `rooms/${roomId}`));
@@ -829,12 +806,12 @@ async function initMultiplayer() {
 }
 
 function initSoloFallback() {
-  blockedTiles.length = 0;
-  generateRandomBlockedTiles(18);
-  buildVisualMap();
+  loadMap(MAP_01);
   renderTileEngine();
   renderUI();
 }
+
+/* ---------------- events ---------------- */
 
 rollBtn?.addEventListener("click", () => {
   if (!rollBtn.disabled) {
@@ -895,6 +872,8 @@ menuToggle?.addEventListener("click", openDrawer);
 menuToggleInline?.addEventListener("click", openDrawer);
 closeDrawer?.addEventListener("click", closeDrawerMenu);
 drawerOverlay?.addEventListener("click", closeDrawerMenu);
+
+/* ---------------- boot ---------------- */
 
 if (isMultiplayer) {
   initMultiplayer();
