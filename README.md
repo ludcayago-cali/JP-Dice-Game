@@ -1,8 +1,8 @@
 # Dice Corner Duel
 
 Folder structure:
-- `index.html` — main page
-- `assets/css/style.css` — all styles
+- `mobile-index.html` — main page
+- `assets/css/mobile-style.css` — all styles
 - `assets/js/game.js` — full game logic
 
 ## How to run
